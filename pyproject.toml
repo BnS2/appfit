@@ -1,0 +1,24 @@
+[project]
+name = "appfit"
+version = "0.1.0"
+description = "Get modern apps onto aged-out iOS devices via Apple's own last-compatible-version mechanism"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "keyring>=24.0",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+device = ["pymobiledevice3>=11.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+appfit = "appfit.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
