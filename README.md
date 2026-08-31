@@ -4,9 +4,9 @@ Install an account-owned historical App Store build that still fits an older
 iPhone or iPad. appfit uses Apple's store package and stock iOS installation;
 it does not require a decrypted IPA, AppSync, or an active jailbreak.
 
-> **Current status:** v2 is a command-line app tested on macOS with an iPad 5
-> (`iPad6,11`) running iOS 16.7.16. The friendlier Mac GUI is planned for v3 and
-> does not exist yet.
+> **Current status:** appfit's command-line modes are available and tested on
+> macOS with an iPad 5 (`iPad6,11`) running iOS 16.7.16. A friendlier Mac GUI is
+> planned and does not exist yet.
 
 ## What problem does it solve?
 
@@ -27,18 +27,19 @@ Apple still controls app availability, licence eligibility, historical-build
 retention, and its on-device last-compatible-version offer. appfit cannot create
 a missing build or force Apple to offer one.
 
-## Choose a path
+## Choose a mode
 
-v2 includes the original v1 workflow. v3 is a planned interface, not a separate
-backend.
+appfit currently offers two command-line modes. A Mac GUI is planned as another
+way to use those same capabilities, not as a separate backend.
 
-| Path | Status | USB | What it does |
+| Mode or interface | Status | USB | What it does |
 |---|---|---:|---|
-| **v1 — Licence only** | Available | Not required | Claims a free licence and prints Apple's Purchased-tab steps. Apple may offer its last compatible build on the device. |
-| **v2 — Direct install** | Available | Required | Resolves, downloads, verifies, and installs the fitting store IPA directly. |
-| **v3 — Mac GUI** | Planned | Optional by task | Will put the existing v1/v2 core behind a non-developer interface. |
+| **Licence mode** | Available | Not required | Claims a free licence and prints Apple's Purchased-tab steps. Apple may offer its last compatible build on the device. |
+| **Direct Install mode** | Available | Required | Resolves, downloads, verifies, and installs the fitting store IPA directly. |
+| **Mac GUI** | Planned | Optional by task | Will provide a non-developer interface for the existing modes. |
 
-For the easiest working path today, use v2 with a Mac and USB cable.
+For the most predictable working path today, use Direct Install mode with a Mac
+and USB cable.
 
 ## Install on a Mac
 
@@ -47,7 +48,8 @@ For the easiest working path today, use v2 with a Mac and USB cable.
 - macOS with Terminal
 - Python 3.10 or newer
 - Go (`brew install go` if needed)
-- for v2: the iPhone or iPad unlocked, connected by USB, and trusted by the Mac
+- for Direct Install mode: the iPhone or iPad unlocked, connected by USB, and
+  trusted by the Mac
 - the Apple ID currently used for App Store purchases on that device
 
 ### Recommended: install the v0.2 release
@@ -71,8 +73,8 @@ appfit ipatool status
 If the browser saved the wheel somewhere else, replace the path after
 `pip install` with that location.
 
-The `[device]` extra installs USB support. For the cable-free v1 path only,
-omit `[device]` when installing the wheel:
+The `[device]` extra installs USB support. For Licence mode only, omit `[device]`
+when installing the wheel:
 
 ```bash
 pip install "$HOME/Downloads/appfit-0.2.0-py3-none-any.whl"
@@ -98,7 +100,7 @@ appfit accounts whoami
 The password and two-factor prompt belong to ipatool. appfit stores the email
 used for device pairing, not the password or App Store session.
 
-## Use v1: claim the licence, then install on-device
+## Use Licence mode: claim, then install on-device
 
 Use this path when you want Apple to perform the download on the device and do
 not need appfit to identify or install the exact historical build.
@@ -119,7 +121,7 @@ appfit search "termius"
 Use the exact bundle ID from the result when claiming a licence. Text-search
 matches require confirmation because a licence claim changes purchase history.
 
-## Use v2: install directly over USB
+## Use Direct Install mode: install over USB
 
 ### 1. Find the device
 
@@ -200,7 +202,7 @@ partial-ZIP read, so appfit normally downloads only the winning IPA.
 need full candidate IPA downloads during a cold resolve. Set
 `APPFIT_IPATOOL=/path/to/ipatool` to choose a specific binary explicitly.
 
-## What v2 verified
+## What Direct Install mode verified
 
 On 2026-08-31, the test iPad was rebooted out of Dopamine jailbreak mode. appfit
 resolved a 277-build Termius history, selected v6.3.0 (minimum iOS 16.0, iPhone

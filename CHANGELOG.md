@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## Unreleased
 
+### Changed
+
+- Public documentation now describes Licence and Direct Install as modes,
+  reserving version numbers for appfit releases and internal data formats.
+
 ## 0.2.0 - 2026-08-31
 
 ### Added
