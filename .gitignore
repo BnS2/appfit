@@ -6,3 +6,5 @@ __pycache__/
 spike.log
 spike_result.json
 .DS_Store
+.manual-tests/
+/build/

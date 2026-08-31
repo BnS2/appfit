@@ -6,13 +6,18 @@ without network, and against build histories shaped to hit the awkward cases.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
 from appfit import cache, resolve as resolve_mod
+from appfit.devices import Target
 from appfit.probe import BuildInfo
 from appfit.resolve import (
     NoCompatibleBuild,
+    date_hint,
     estimate_probes,
+    metadata_probe,
     newest_compatible,
 )
 
@@ -142,3 +147,191 @@ def test_cache_is_keyed_by_ios_version():
     on_15 = newest_compatible(BUNDLE, "15.8.3", older.ids, older)
     assert not on_15.from_cache
     assert on_15.external_version_id == "1099"
+
+
+def test_cache_is_keyed_by_platform():
+    probe = FakeProbe(history(20, bump_at=10))
+    ipad = Target.from_ios("16.7.16", "ipad")
+    first = newest_compatible(BUNDLE, ipad.ios_version, probe.ids, probe, target=ipad)
+
+    fresh = FakeProbe(history(20, bump_at=10))
+    iphone = Target.from_ios("16.7.16", "iphone")
+    second = newest_compatible(
+        BUNDLE, iphone.ios_version, fresh.ids, fresh, target=iphone
+    )
+
+    assert first.external_version_id == second.external_version_id
+    assert not second.from_cache
+    assert fresh.calls
+
+
+class FakeMetadataClient:
+    def __init__(self, ids: list[str], start: date = date(2020, 1, 1)):
+        self.releases = {
+            version_id: start + timedelta(days=index)
+            for index, version_id in enumerate(ids)
+        }
+        self.calls: list[str] = []
+
+    def version_metadata(self, bundle_id: str, version_id: str) -> dict:
+        self.calls.append(version_id)
+        return {
+            "display_version": f"v{version_id}",
+            "release_date": self.releases[version_id].isoformat(),
+        }
+
+
+def test_date_hint_finds_last_build_before_cutoff():
+    ids = [str(1000 + i) for i in range(370)]
+    client = FakeMetadataClient(ids)
+    hint = date_hint(client, BUNDLE, date(2020, 1, 1) + timedelta(days=350))
+
+    assert hint(ids) == 349
+    assert len(client.calls) <= 10
+
+
+def test_date_seed_preserves_answer_and_reduces_downloads():
+    builds = history(370, bump_at=350)
+    baseline = FakeProbe(builds)
+    expected = newest_compatible(
+        BUNDLE, "16.7.16", baseline.ids, baseline, use_cache=False
+    )
+
+    seeded = FakeProbe(builds)
+    client = FakeMetadataClient(seeded.ids)
+    hint = date_hint(
+        client,
+        BUNDLE,
+        date(2020, 1, 1) + timedelta(days=350),
+    )
+    actual = newest_compatible(
+        BUNDLE,
+        "16.7.16",
+        seeded.ids,
+        seeded,
+        use_cache=False,
+        hint=hint,
+    )
+
+    assert actual.external_version_id == expected.external_version_id
+    assert len(seeded.calls) < len(baseline.calls)
+
+
+def test_known_incompatible_latest_avoids_downloading_current_build():
+    probe = FakeProbe(history(100, bump_at=80))
+    latest = BuildInfo("17.0", "current", [], "store")
+
+    result = newest_compatible(
+        BUNDLE,
+        "16.7.16",
+        probe.ids,
+        probe,
+        use_cache=False,
+        latest_info=latest,
+    )
+
+    assert result.external_version_id == "1079"
+    assert probe.ids[-1] not in probe.calls
+
+
+def test_fitting_hint_avoids_downloading_oldest_boundary():
+    probe = FakeProbe(history(100, bump_at=80))
+    latest = BuildInfo("17.0", "current", [], "store")
+
+    result = newest_compatible(
+        BUNDLE,
+        "16.7.16",
+        probe.ids,
+        probe,
+        use_cache=False,
+        hint=lambda _: 70,
+        latest_info=latest,
+    )
+
+    assert result.external_version_id == "1079"
+    assert probe.ids[0] not in probe.calls
+
+
+@pytest.mark.parametrize("hinted", [10, 200, 360, None])
+def test_bad_or_missing_hint_never_changes_the_answer(hinted):
+    builds = history(370, bump_at=350)
+    probe = FakeProbe(builds)
+    hint = (lambda _: hinted) if hinted is not None else (lambda _: None)
+
+    result = newest_compatible(
+        BUNDLE,
+        "16.7.16",
+        probe.ids,
+        probe,
+        use_cache=False,
+        hint=hint,
+    )
+
+    assert result.external_version_id == "1349"
+
+
+def test_date_hint_uses_cached_metadata():
+    ids = [str(1000 + i) for i in range(32)]
+    first = FakeMetadataClient(ids)
+    cutoff = date(2020, 1, 16)
+    assert date_hint(first, BUNDLE, cutoff)(ids) == 14
+    assert first.calls
+
+    second = FakeMetadataClient(ids)
+    assert date_hint(second, BUNDLE, cutoff)(ids) == 14
+    assert second.calls == []
+
+
+def test_date_hint_degrades_to_none_when_metadata_fails():
+    class BrokenClient:
+        def version_metadata(self, bundle_id, version_id):
+            raise RuntimeError("rate limited")
+
+    hint = date_hint(BrokenClient(), BUNDLE, date(2020, 1, 1))
+    assert hint(["1", "2", "3"]) is None
+
+
+def test_metadata_probe_avoids_full_download_when_fields_are_exposed():
+    class Client:
+        compatibility_metadata_supported = None
+
+        def version_metadata(self, bundle_id, version_id):
+            self.compatibility_metadata_supported = True
+            return {
+                "display_version": "8.2",
+                "release_date": "2023-01-01",
+                "minimum_os": "16.0",
+                "device_families": [1, 2],
+            }
+
+    fallback_calls = []
+    probe = metadata_probe(
+        Client(),
+        BUNDLE,
+        lambda version_id: fallback_calls.append(version_id),
+    )
+
+    info = probe("123")
+
+    assert info == BuildInfo("16.0", "8.2", [1, 2], "metadata")
+    assert fallback_calls == []
+
+
+def test_metadata_probe_falls_back_after_client_reports_fields_unsupported():
+    class Client:
+        compatibility_metadata_supported = False
+
+        def version_metadata(self, bundle_id, version_id):
+            raise AssertionError("known unsupported client must not be called")
+
+    expected = BuildInfo("16.0", "8.2", [1, 2], "ipa")
+    fallback_calls = []
+
+    def fallback(version_id):
+        fallback_calls.append(version_id)
+        return expected
+
+    probe = metadata_probe(Client(), BUNDLE, fallback)
+
+    assert probe("123") is expected
+    assert fallback_calls == ["123"]

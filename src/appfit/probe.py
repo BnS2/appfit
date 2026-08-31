@@ -45,7 +45,26 @@ class BuildInfo:
     source: str  # which strategy answered
 
     def runs_on(self, ios_version: str) -> bool:
+        """Minimum-OS check alone. Enough when no hardware family is known."""
         return version_tuple(self.minimum_os) <= version_tuple(ios_version)
+
+    def fits(self, target) -> bool:
+        """Whether this build runs on `target`: minimum OS *and* hardware family.
+
+        Minimum OS is the usual blocker, but it is not the only one -- an
+        iPhone-only build declares UIDeviceFamily [1] and will not install on an
+        iPad however old the deployment target is.
+
+        Either side may be unknown: `device_families` is empty when the answer
+        came from store metadata rather than an Info.plist, and
+        `target.device_family` is None when the user typed --ios with no cable.
+        Unknown never rejects a build -- it only means we cannot rule one out.
+        """
+        if not self.runs_on(target.ios_version):
+            return False
+        if self.device_families and target.device_family is not None:
+            return target.device_family in self.device_families
+        return True
 
 
 def version_tuple(v: str) -> tuple[int, ...]:

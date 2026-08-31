@@ -1,20 +1,20 @@
 """Find the newest build of an app that a given iOS version can actually run.
 
 Apple exposes every build an account is entitled to, oldest first -- a title
-like Prime Video has ~370 of them. Binary search cuts that to ~9 probes.
+like Prime Video has ~370 of them. Binary search makes the number logarithmic.
 
-That matters more than it looks, because a probe is expensive here. ipatool
-does not expose the signed download URL (see store.py), so establishing a
-build's MinimumOSVersion means downloading the IPA. Hence:
+That matters because the cost of a probe depends on the installed helper.
+appfit's managed ipatool emits compatibility values from a partial ZIP read;
+ordinary upstream ipatool does not, so establishing a build's MinimumOSVersion
+then means downloading the IPA. Hence:
 
   * results are cached, and the cache is safe to share -- nothing in it is
     account-specific;
-  * the probe is injected rather than assumed, so a caller with a cheaper
-    source (a signed URL and probe.RemoteZip, a seeded cache) can supply it;
+  * the probe is injected rather than assumed, so metadata, a signed URL and
+    probe.RemoteZip, a seeded cache, or the full-IPA fallback can supply it;
+  * release-date metadata can seed the lower bound, but is never trusted as a
+    compatibility answer;
   * callers are expected to warn before a cold resolve.
-
-In phase 2 the cost largely disappears: an install downloads an IPA anyway, so
-the probe that identified the build is the same fetch that installs it.
 
 Assumption: MinimumOSVersion is non-decreasing across a title's history. That is
 how releases normally go but nothing enforces it, so after the search converges
@@ -24,15 +24,19 @@ we scan a few builds forward to catch a lowered deployment target.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+import time
 from typing import Callable, Sequence
 
 from . import cache
+from .devices import DEFAULT_PLATFORM, Target
 from .probe import BuildInfo
 
 # How far past the binary-search result to check for non-monotonic bumps.
 FORWARD_SCAN = 3
 
 Probe = Callable[[str], BuildInfo]
+Hint = Callable[[Sequence[str]], int | None]
 
 
 class NoCompatibleBuild(RuntimeError):
@@ -68,8 +72,12 @@ def newest_compatible(
     probe: Probe,
     on_probe: Callable[[int, str], None] | None = None,
     use_cache: bool = True,
+    hint: Hint | None = None,
+    target: Target | None = None,
+    latest_info: BuildInfo | None = None,
 ) -> Resolution:
-    if use_cache and (hit := cache.get(bundle_id, ios_version)):
+    platform = target.platform if target else DEFAULT_PLATFORM
+    if use_cache and (hit := cache.get(bundle_id, ios_version, platform)):
         return Resolution(
             external_version_id=hit.external_version_id,
             display_version=hit.display_version,
@@ -84,6 +92,8 @@ def newest_compatible(
 
     probes = 0
     seen: dict[str, BuildInfo] = {}
+    if latest_info is not None:
+        seen[version_ids[-1]] = latest_info
 
     def check(index: int) -> BuildInfo:
         nonlocal probes
@@ -99,22 +109,39 @@ def newest_compatible(
                 )
         return seen[version_id]
 
+    def fits(info: BuildInfo) -> bool:
+        return info.fits(target) if target else info.runs_on(ios_version)
+
     # Fast path: if the current build runs, there was never anything to resolve.
-    if check(len(version_ids) - 1).runs_on(ios_version):
+    if fits(check(len(version_ids) - 1)):
         best = len(version_ids) - 1
     else:
-        if not check(0).runs_on(ios_version):
-            raise NoCompatibleBuild(
-                f"{bundle_id} has never shipped a build supporting iOS "
-                f"{ios_version} — its oldest build needs iOS "
-                f"{seen[version_ids[0]].minimum_os}"
-            )
+        # Establish a compatible lower bound. A dated candidate is only a
+        # starting point; probing remains the source of truth. If it fits, the
+        # oldest build never needs downloading at all.
+        lo: int | None = None
+        hi = len(version_ids) - 1
+        if hint is not None:
+            hinted = hint(version_ids)
+            if hinted is not None and 0 <= hinted < hi:
+                if fits(check(hinted)):
+                    lo = hinted
+                else:
+                    hi = hinted
 
-        # Invariant: version_ids[lo] runs, version_ids[hi] does not.
-        lo, hi = 0, len(version_ids) - 1
+        if lo is None:
+            if not fits(check(0)):
+                raise NoCompatibleBuild(
+                    f"{bundle_id} has never shipped a build supporting iOS "
+                    f"{ios_version} — its oldest build needs iOS "
+                    f"{seen[version_ids[0]].minimum_os}"
+                )
+            lo = 0
+
+        # Invariant: version_ids[lo] fits, version_ids[hi] does not.
         while hi - lo > 1:
             mid = (lo + hi) // 2
-            if check(mid).runs_on(ios_version):
+            if fits(check(mid)):
                 lo = mid
             else:
                 hi = mid
@@ -125,7 +152,7 @@ def newest_compatible(
             ahead = best + offset
             if ahead >= len(version_ids):
                 break
-            if check(ahead).runs_on(ios_version):
+            if fits(check(ahead)):
                 best = ahead
 
     info = seen[version_ids[best]]
@@ -135,6 +162,7 @@ def newest_compatible(
         external_version_id=version_ids[best],
         display_version=info.display_version,
         minimum_os=info.minimum_os,
+        platform=platform,
     )
     return Resolution(
         external_version_id=version_ids[best],
@@ -146,7 +174,131 @@ def newest_compatible(
     )
 
 
-def download_probe(client, bundle_id: str, workdir, platform: str = "ipad") -> Probe:
+def date_hint(
+    client,
+    bundle_id: str,
+    cutoff: date,
+    on_step: Callable[[int, str], None] | None = None,
+) -> Hint:
+    """Return a cheap release-date search to seed the expensive build search.
+
+    The returned function finds the newest build released before ``cutoff``.
+    Store metadata is cached because release dates are immutable and safe to
+    share. Any malformed or unavailable response returns no hint; compatibility
+    probing then falls back to the normal full-range binary search.
+    """
+
+    steps = 0
+
+    def metadata(version_id: str):
+        nonlocal steps
+        if hit := cache.get_version(bundle_id, version_id):
+            return hit
+
+        for attempt in range(2):
+            try:
+                raw = client.version_metadata(bundle_id, version_id)
+                cache.put_version(
+                    bundle_id,
+                    version_id,
+                    raw.get("display_version", ""),
+                    raw.get("release_date", ""),
+                    raw.get("minimum_os", ""),
+                    raw.get("device_families", []),
+                )
+                return cache.VersionMeta(
+                    display_version=raw.get("display_version", ""),
+                    release_date=raw.get("release_date", ""),
+                    minimum_os=raw.get("minimum_os", ""),
+                    device_families=raw.get("device_families", []),
+                )
+            except Exception:  # Store failures are advisory on this path.
+                if attempt == 0:
+                    time.sleep(0.25)
+        return None
+
+    def find(version_ids: Sequence[str]) -> int | None:
+        nonlocal steps
+        if not version_ids:
+            return None
+
+        lo, hi = 0, len(version_ids)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            meta = metadata(version_ids[mid])
+            steps += 1
+            if meta is None:
+                return None
+            try:
+                released = date.fromisoformat(meta.release_date)
+            except (TypeError, ValueError):
+                return None
+            if on_step:
+                label = meta.display_version or version_ids[mid]
+                on_step(steps, f"{label} → {released.isoformat()}")
+            if released < cutoff:
+                lo = mid + 1
+            else:
+                hi = mid
+        return lo - 1 if lo else None
+
+    return find
+
+
+def metadata_probe(client, bundle_id: str, fallback: Probe) -> Probe:
+    """Use ipatool's partial Info.plist read when compatibility is exposed.
+
+    The released binary currently discards these fields, in which case one
+    observed metadata response disables this path for the rest of the resolve
+    and the full-download probe remains authoritative.
+    """
+
+    def probe(version_id: str) -> BuildInfo:
+        supported = getattr(client, "compatibility_metadata_supported", None)
+        if supported is False:
+            return fallback(version_id)
+
+        hit = cache.get_version(bundle_id, version_id)
+        if hit is not None and hit.minimum_os:
+            return BuildInfo(
+                minimum_os=hit.minimum_os,
+                display_version=hit.display_version,
+                device_families=hit.device_families,
+                source="metadata",
+            )
+
+        try:
+            raw = client.version_metadata(bundle_id, version_id)
+        except Exception:
+            return fallback(version_id)
+
+        cache.put_version(
+            bundle_id,
+            version_id,
+            raw.get("display_version", ""),
+            raw.get("release_date", ""),
+            raw.get("minimum_os", ""),
+            raw.get("device_families", []),
+        )
+        if raw.get("minimum_os"):
+            return BuildInfo(
+                minimum_os=raw["minimum_os"],
+                display_version=raw.get("display_version", ""),
+                device_families=raw.get("device_families", []),
+                source="metadata",
+            )
+        return fallback(version_id)
+
+    return probe
+
+
+def download_probe(
+    client,
+    bundle_id: str,
+    workdir,
+    platform: str,
+    on_progress: Callable[[int], None] | None = None,
+) -> Probe:
     """A probe that downloads each candidate build and reads its Info.plist.
 
     The expensive path, and currently the only one that works against Apple.
@@ -163,7 +315,13 @@ def download_probe(client, bundle_id: str, workdir, platform: str = "ipad") -> P
     def _probe(version_id: str) -> BuildInfo:
         dest = workdir / f"{bundle_id}-{version_id}.ipa"
         if not dest.exists():
-            client.download(bundle_id, dest, version_id=version_id, platform=platform)
+            client.download(
+                bundle_id,
+                dest,
+                platform=platform,
+                version_id=version_id,
+                on_progress=on_progress,
+            )
         return from_ipa_file(dest)
 
     return _probe

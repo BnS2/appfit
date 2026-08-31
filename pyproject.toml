@@ -1,8 +1,11 @@
 [project]
 name = "appfit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Get modern apps onto aged-out iOS devices via Apple's own last-compatible-version mechanism"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
+keywords = ["ios", "ipad", "app-store", "ipa", "ipatool"]
 dependencies = [
     "requests>=2.31",
     "keyring>=24.0",
@@ -13,6 +16,12 @@ dependencies = [
 device = ["pymobiledevice3>=11.0"]
 dev = ["pytest>=8.0"]
 
+[project.urls]
+Homepage = "https://github.com/BnS2/appfit"
+Repository = "https://github.com/BnS2/appfit.git"
+Issues = "https://github.com/BnS2/appfit/issues"
+Changelog = "https://github.com/BnS2/appfit/blob/main/CHANGELOG.md"
+
 [project.scripts]
 appfit = "appfit.cli:app"
 
@@ -22,3 +31,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+appfit = ["data/*.patch"]

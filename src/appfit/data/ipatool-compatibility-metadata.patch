@@ -1,0 +1,57 @@
+diff --git a/cmd/get_version_metadata.go b/cmd/get_version_metadata.go
+index 043611d..eddbd0d 100644
+--- a/cmd/get_version_metadata.go
++++ b/cmd/get_version_metadata.go
+@@ -73,0 +74,2 @@ func getVersionMetadataCmd() *cobra.Command {
++					Str("minimumOSVersion", out.MinimumOSVersion).
++					Interface("deviceFamilies", out.DeviceFamilies).
+diff --git a/pkg/appstore/appstore_get_version_metadata.go b/pkg/appstore/appstore_get_version_metadata.go
+index 3a8ecdc..f412eba 100644
+--- a/pkg/appstore/appstore_get_version_metadata.go
++++ b/pkg/appstore/appstore_get_version_metadata.go
+@@ -19,2 +19,4 @@ type GetVersionMetadataOutput struct {
+-	DisplayVersion string
+-	ReleaseDate    time.Time
++	DisplayVersion   string
++	ReleaseDate      time.Time
++	MinimumOSVersion string
++	DeviceFamilies   []int
+diff --git a/pkg/appstore/appstore_partial_zip.go b/pkg/appstore/appstore_partial_zip.go
+index d824c43..5f9b422 100644
+--- a/pkg/appstore/appstore_partial_zip.go
++++ b/pkg/appstore/appstore_partial_zip.go
+@@ -10,0 +11 @@ import (
++	"reflect"
+@@ -30,2 +31,4 @@ type versionMetadata struct {
+-	DisplayVersion string
+-	ReleaseDate    time.Time
++	DisplayVersion   string
++	ReleaseDate      time.Time
++	MinimumOSVersion string
++	DeviceFamilies   []int
+@@ -232,0 +236,18 @@ func readVersionMetadataFromInfoPlist(file *zip.File) (versionMetadata, error) {
++	minimumOSVersion := strings.TrimSpace(fmt.Sprintf("%v", metadata["MinimumOSVersion"]))
++	if minimumOSVersion == "<nil>" {
++		minimumOSVersion = ""
++	}
++
++	deviceFamilies := []int{}
++	if raw, ok := metadata["UIDeviceFamily"]; ok {
++		value := reflect.ValueOf(raw)
++		if value.Kind() == reflect.Slice {
++			for i := 0; i < value.Len(); i++ {
++				family, parseErr := strconv.Atoi(fmt.Sprintf("%v", value.Index(i).Interface()))
++				if parseErr == nil {
++					deviceFamilies = append(deviceFamilies, family)
++				}
++			}
++		}
++	}
++
+@@ -234,2 +255,4 @@ func readVersionMetadataFromInfoPlist(file *zip.File) (versionMetadata, error) {
+-		DisplayVersion: displayVersion,
+-		ReleaseDate:    releaseDate,
++		DisplayVersion:   displayVersion,
++		ReleaseDate:      releaseDate,
++		MinimumOSVersion: minimumOSVersion,
++		DeviceFamilies:   deviceFamilies,
