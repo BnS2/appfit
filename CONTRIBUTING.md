@@ -32,3 +32,15 @@ logs.
 - If the pinned ipatool revision changes, verify the bundled patch against that
   exact official commit and test real compatibility metadata before updating the
   manifest constants.
+
+## Releases
+
+1. Update `pyproject.toml` and add a dated version heading to `CHANGELOG.md`.
+2. Run `python scripts/release_check.py v<version>`, the full local test suite,
+   and `python -m build`.
+3. Push the release commit to `main` and wait for CI to pass.
+4. Create and push an annotated `v<version>` tag.
+
+The tag-triggered Release workflow repeats the offline tests, builds wheel and
+source archives, and publishes both to a GitHub Release. It does not publish to
+PyPI.

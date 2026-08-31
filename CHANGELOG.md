@@ -20,7 +20,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - An appfit-managed, compatibility-aware ipatool build pinned to official
   v2.4.0 source, with `appfit ipatool install` and `status` diagnostics.
 - Download and installation progress reporting.
-- MIT licensing and GitHub CI/release documentation.
+- MIT licensing, reader-first documentation, macOS CI, and tag-driven GitHub
+  Release delivery for wheel/source artifacts.
 
 ### Changed
 

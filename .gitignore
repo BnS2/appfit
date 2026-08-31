@@ -8,3 +8,4 @@ spike_result.json
 .DS_Store
 .manual-tests/
 /build/
+/dist/

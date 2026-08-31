@@ -2,244 +2,275 @@
 
 [![CI](https://github.com/BnS2/appfit/actions/workflows/ci.yml/badge.svg)](https://github.com/BnS2/appfit/actions/workflows/ci.yml)
 
-**Find a historical App Store build that fits an older iPhone or iPad, download
-the account-owned package, and optionally install it over USB.** No jailbreak or
-third-party IPA archive is required.
+Install an account-owned historical App Store build that still fits an older
+iPhone or iPad. appfit uses Apple's store package and stock iOS installation;
+it does not require a decrypted IPA, AppSync, or an active jailbreak.
 
-appfit has two related flows:
+> **Current status:** v2 is a command-line app tested on macOS with an iPad 5
+> (`iPad6,11`) running iOS 16.7.16. The friendlier Mac GUI is planned for v3 and
+> does not exist yet.
 
-- `appfit get` claims a free app licence on the selected Apple ID and prints the
-  standard Purchased-tab steps. Apple may then offer its own last-compatible
-  version. appfit cannot guarantee that offer: the app must still be available,
-  the account must be eligible, and Apple must retain a compatible build.
-- `appfit install` resolves a historical build, downloads the intact encrypted
-  store IPA for that Apple ID, verifies its declared iOS/device-family support,
-  and hands it unchanged to iOS Installation Proxy over USB.
+## What problem does it solve?
 
-### What v0.2 actually verified
+An app's current release may require a newer iOS version even though older,
+compatible builds still exist in its App Store history. Getting one onto an
+older device involves several separate jobs:
 
-On 2026-08-31, an iPad 5 (`iPad6,11`) running iOS 16.7.16 was rebooted out of
-Dopamine jailbreak mode. The current Termius release required iOS 17. appfit:
+1. use the Apple ID that belongs to the target device;
+2. claim the free app licence if the account does not own it;
+3. find the newest historical build whose declared requirements fit;
+4. download that account's intact, encrypted store IPA; and
+5. optionally install it over USB.
 
-1. read the 277-build history through the account's App Store session;
-2. selected Termius v6.3.0, whose plist declares minimum iOS 16.0 and iPhone/iPad
-   device families;
-3. downloaded only that winning FairPlay-bound IPA;
-4. installed it through stock iOS Installation Proxy; and
-5. launched it successfully, as confirmed on the device.
+appfit coordinates those jobs and refuses a device operation when the active
+Apple ID does not match the account paired to that device.
 
-FAST Speed Test was also installed and launched through the same stock-device
-path. These tests prove the flow on that device and those apps; they do not
-promise that every App Store title retains a compatible historical build.
+Apple still controls app availability, licence eligibility, historical-build
+retention, and its on-device last-compatible-version offer. appfit cannot create
+a missing build or force Apple to offer one.
 
-## Install
+## Choose a path
 
-appfit currently installs from source and requires Python 3.10 or newer:
+v2 includes the original v1 workflow. v3 is a planned interface, not a separate
+backend.
+
+| Path | Status | USB | What it does |
+|---|---|---:|---|
+| **v1 — Licence only** | Available | Not required | Claims a free licence and prints Apple's Purchased-tab steps. Apple may offer its last compatible build on the device. |
+| **v2 — Direct install** | Available | Required | Resolves, downloads, verifies, and installs the fitting store IPA directly. |
+| **v3 — Mac GUI** | Planned | Optional by task | Will put the existing v1/v2 core behind a non-developer interface. |
+
+For the easiest working path today, use v2 with a Mac and USB cable.
+
+## Install on a Mac
+
+### Requirements
+
+- macOS with Terminal
+- Python 3.10 or newer
+- Go (`brew install go` if needed)
+- for v2: the iPhone or iPad unlocked, connected by USB, and trusted by the Mac
+- the Apple ID currently used for App Store purchases on that device
+
+### Recommended: install the v0.2 release
+
+1. Download `appfit-0.2.0-py3-none-any.whl` from the
+   [v0.2.0 GitHub Release](https://github.com/BnS2/appfit/releases/tag/v0.2.0).
+2. Open Terminal and run:
+
+```bash
+mkdir -p "$HOME/appfit"
+cd "$HOME/appfit"
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install "$HOME/Downloads/appfit-0.2.0-py3-none-any.whl[device]"
+
+appfit ipatool install
+appfit ipatool status
+```
+
+If the browser saved the wheel somewhere else, replace the path after
+`pip install` with that location.
+
+### Alternative: install from source
 
 ```bash
 git clone https://github.com/BnS2/appfit.git
 cd appfit
+
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .              # licence, lookup, resolve, and download
-pip install -e '.[device]'    # optional: USB detection and direct install
+pip install -e ".[device]"
 
-brew install go               # one-time build dependency for optimized ipatool
-appfit ipatool install        # pinned official source + appfit metadata patch
-appfit ipatool status
-```
-
-`appfit ipatool install` builds official ipatool v2.4.0 at its immutable source
-commit and stores the result under `~/.config/appfit/tools/`. It verifies the
-commit before applying appfit's bundled patch, and Go verifies dependencies
-against upstream's `go.sum`; appfit does not download an opaque helper binary.
-The source revision is pinned, but builds are not promised to be byte-for-byte
-identical across different Go toolchains or operating systems.
-
-If Go is unavailable, `brew install ipatool` remains a supported fallback. It
-can claim and download apps normally, but cold compatibility searches may need
-full candidate IPA downloads. `APPFIT_IPATOOL=/path/to/ipatool` explicitly
-overrides both the managed helper and PATH lookup.
-
-Direct installation additionally needs the target device connected over USB,
-unlocked, and trusted by the computer. The cable-free `get --ios` flow does not
-need the `[device]` extra or a connected device.
-
-## Use
-
-```bash
-appfit accounts use <apple-id>      # sign in (password + 2FA go to ipatool)
-appfit get <app> --ios 16.7.16      # claim the licence
-appfit get <app> --device <udid>    # or read the iOS version off the device
-appfit download <app> --device <udid> # fetch and verify the fitting IPA
-appfit install <app> --device <udid>  # fetch and install it over USB
-
-appfit devices                      # USB devices: model, iOS, UDID
-appfit pair <udid> --account <email>
-appfit search "termius"
-appfit resolve <app> --ios 16.7.16  # which build exactly?
-appfit cache export > seed.json     # share account-free resolution data
-appfit cache import seed.json
-appfit cache prune                  # dry-run: show unreferenced IPA downloads
-appfit cache prune --yes            # permanently delete the reviewed files
-appfit ipatool status               # helper path and fast-probe capability
-```
-
-`<app>` accepts a bundle ID, numeric App Store ID, store URL, or a search term.
-
-## Whose Apple ID?
-
-**The one signed into the target device.** Not yours, unless it is your device.
-
-Apple gates the older-version offer on that account's purchase history, and
-FairPlay binds the binary to that account. Claiming a licence on your own Apple
-ID for a friend's iPad means their app depends on your account for every future
-update, and account sharing breaks Apple's terms.
-
-`ipatool` holds one session at a time. For `--device` operations, appfit records
-which Apple ID that device belongs to and **refuses to act when a different
-account is signed in** rather than quietly claiming a licence on it:
-
-```
-✗ signed in as me@example.com, but this device is paired to them@example.com.
-  Switch with:  appfit accounts use them@example.com
-```
-
-For the same reason, an app matched by fuzzy text search must be confirmed before
-a licence is claimed — the store returns a plausible result for almost any
-string, and a claim is permanent.
-
-With `--ios` and no connected device, appfit cannot discover the device's Apple
-ID. It uses the explicit `--account` value or, if omitted, the account currently
-signed into ipatool. The user is responsible for choosing the account that is
-actually used on the target device.
-
-Direct USB install does not bypass FairPlay. ipatool downloads the account's
-encrypted store package, including `iTunesMetadata.plist` and the app's
-`SC_Info/*.sinf`; appfit verifies its OS/device-family requirements and hands it
-unchanged to iOS Installation Proxy. A stock iPad accepts that package without
-AppSync because it remains Apple-signed and licensed to the device's account.
-
-## Why it drives ipatool instead of speaking the protocol
-
-Apple's App Store requests require authenticated signing that appfit does not
-implement. appfit delegates account login, licence claims, build history, and
-downloads to ipatool. appfit owns identifier resolution, device detection,
-account/device safeguards, compatibility search, local verification, and cache
-management.
-
-**The upstream cost of that choice:** released ipatool does not expose the
-signed download URL or the historical build's minimum OS, so compatibility
-would normally need candidate IPA downloads. appfit's managed helper adds the
-two metadata fields to ipatool's existing partial-ZIP response; the ordinary
-release remains supported as a slower fallback.
-
-## Historical build resolution
-
-`get` is cheap because it only claims the free licence; it does not prove that a
-compatible historical build exists. `resolve` answers the separate question
-"*which* build fits?". v2 searches release dates first, then verifies the result:
-
-- The verified Termius history contained 277 builds. With appfit's managed
-  helper, the logarithmic search uses small partial-ZIP metadata requests and
-  normally downloads only the selected IPA. An ordinary upstream ipatool binary
-  remains supported, but may require roughly a dozen full candidate downloads.
-- Results are cached in `~/.config/appfit/cache.json`, keyed by
-  (bundle ID, iOS version, platform), alongside immutable build metadata. The
-  file contains no credentials, Apple ID, or session data, but it does reveal
-  app bundle IDs and target versions; review it before sharing.
-- Downloaded IPAs are kept in `~/.config/appfit/ipa/` so a later install
-  reuses them.
-- The command warns and asks before a cold lookup.
-
-### Cache maintenance
-
-`appfit cache prune` lists appfit-downloaded IPAs that no cached resolution
-references. It is always a dry-run unless `--yes` is supplied. Referenced
-winning builds, files modified within the last five minutes, symlinks, and files
-that do not follow appfit's naming scheme are protected. Before deletion, appfit
-rechecks the cache and file identity so a build that became referenced or was
-replaced after the dry-run is skipped. If `cache.json` is corrupt or uses an
-unknown schema, prune fails closed and deletes nothing.
-
-```bash
-appfit cache prune                 # inspect candidates; deletes nothing
-appfit cache prune --min-age 30    # ignore files newer than 30 minutes
-appfit cache prune --yes           # permanent deletion after review
-```
-
-`appfit cache clear` removes resolution metadata only; it intentionally leaves
-IPAs untouched. A later prune will treat those now-unreferenced appfit IPAs as
-candidates, so export useful metadata before clearing it.
-
-`probe.py` still contains a working, tested HTTP-Range reader that pulls
-`Info.plist` out of a remote IPA without downloading it (a few hundred KB instead
-of hundreds of MB). It is unused against Apple only because there is no URL to
-point it at. If the signing is ever implemented, the cheap path is already built.
-
-Current ipatool already range-reads each historical IPA's `Info.plist` for
-display version and release date, but does not expose the `MinimumOSVersion` or
-`UIDeviceFamily` values it read. appfit bundles a minimal source patch and a
-pinned source-build installer:
-
-```bash
 appfit ipatool install
 appfit ipatool status
-appfit install <app> --device <udid>
 ```
 
-The managed binary is preferred automatically. This is the path used to resolve
-Termius from 277 historical builds: eight partial `Info.plist` probes, one full
-download for the winning v6.3.0 IPA, then stock-device installation. The
-regular Homebrew binary remains supported and falls back to full IPA probes.
+The `[device]` extra installs USB support. For the cable-free v1 path only,
+omit `[device]` when installing the wheel, or use `pip install -e .` from source.
 
-## Limitations
+When opening a new Terminal later, return to the repository and reactivate the
+environment:
 
-- Apple controls licence eligibility, historical-build retention, and the
-  Purchased-tab last-compatible-version offer. appfit cannot create a build or
-  force an offer when Apple does not provide one.
-- Removed, paid, region-restricted, account-ineligible, or never-compatible apps
-  may fail before resolution or installation.
-- `MinimumOSVersion` and `UIDeviceFamily` catch most incompatibility, but RAM,
-  GPU and Metal requirements are not declared in `Info.plist` — a build can
-  resolve as compatible and still run badly on an A9. Treat the answer as the
-  best candidate, not a guarantee.
-- The build search assumes minimum OS is non-decreasing over a title's history.
-  It usually is; appfit checks the next three builds for a nearby reversal, but
-  it cannot prove compatibility across an arbitrarily non-monotonic history.
-- Some apps have never shipped a build for your device's iOS. appfit says so
-  plainly instead of leaving you hunting mirrors.
-- Direct USB install is deliberately gated on a device↔Apple-ID pairing. Store
-  IPAs remain FairPlay-bound to the licensing account; pairing the wrong account
-  can produce an app that installs but cannot launch.
+```bash
+cd appfit
+source .venv/bin/activate
+```
 
-## Roadmap
+## First-time account setup
 
-- **v1** — accounts, pairing, device detection, licence claim, build
-  resolution. Stock-safe, no USB required.
-- **v2 (now)** — release-date-seeded resolution, platform/family checks, cache
-  sharing, and `download`/`install` over USB via pymobiledevice3. Verified through
-  stock iOS Installation Proxy with an intact FairPlay-signed store IPA; no
-  AppSync or jailbreak service is required.
-- **v3** — a Mac GUI over this core.
+Sign into ipatool with the same Apple ID used by the target device:
 
-Only user-licensed store IPAs, using the account that legitimately owns them. No
-decrypted IPAs, no DRM circumvention.
+```bash
+appfit accounts use you@example.com
+appfit accounts whoami
+```
 
-appfit is an independent project and is not affiliated with or endorsed by
-Apple Inc.
+The password and two-factor prompt belong to ipatool. appfit stores the email
+used for device pairing, not the password or App Store session.
+
+## Use v1: claim the licence, then install on-device
+
+Use this path when you want Apple to perform the download on the device and do
+not need appfit to identify or install the exact historical build.
+
+```bash
+appfit get <exact-bundle-id> --ios 16.7.16 --platform ipad
+```
+
+appfit claims the free licence and prints the Purchased-tab steps. Apple may
+offer an older compatible version there. This offer is not guaranteed.
+
+If you do not know the bundle ID:
+
+```bash
+appfit search "termius"
+```
+
+Use the exact bundle ID from the result when claiming a licence. Text-search
+matches require confirmation because a licence claim changes purchase history.
+
+## Use v2: install directly over USB
+
+### 1. Find the device
+
+```bash
+appfit devices
+```
+
+Copy the displayed UDID.
+
+### 2. Verify and pair its Apple ID
+
+Check the App Store account on the device itself, then record that relationship:
+
+```bash
+appfit pair <udid> --account you@example.com
+appfit accounts list
+```
+
+Pairing is a safety assertion made by the user; appfit cannot read the device's
+App Store email automatically.
+
+### 3. Install an exact app
+
+```bash
+appfit install <exact-bundle-id> --device <udid>
+```
+
+appfit will:
+
+- reject the operation if the signed-in account does not match the pairing;
+- claim the free licence if needed;
+- select the newest build matching iOS and device family;
+- download and locally verify the winning IPA; and
+- upload and install it through stock iOS Installation Proxy.
+
+Useful variants:
+
+```bash
+appfit resolve <exact-bundle-id> --device <udid>   # identify the fitting build
+appfit download <exact-bundle-id> --device <udid>  # download without installing
+```
+
+## Command guide
+
+| Command | Purpose |
+|---|---|
+| `appfit search <words>` | Find an App Store title and bundle ID. |
+| `appfit accounts use <email>` | Sign into ipatool interactively. |
+| `appfit accounts whoami` | Show the active store account. |
+| `appfit devices` | List connected USB devices, iOS versions, and UDIDs. |
+| `appfit pair <udid> --account <email>` | Record the device/account safety pairing. |
+| `appfit get <app> --ios <version>` | Claim a free licence and print on-device steps. |
+| `appfit resolve <app> --device <udid>` | Find the newest compatible historical build. |
+| `appfit download <app> --device <udid>` | Resolve, download, and verify an IPA. |
+| `appfit install <app> --device <udid>` | Resolve, download, verify, and install over USB. |
+| `appfit cache prune` | Dry-run a cleanup of unreferenced IPA downloads. |
+| `appfit ipatool status` | Show which ipatool helper appfit selected. |
+
+`<app>` may be a bundle ID, numeric App Store ID, App Store URL, or search term.
+Use an exact identifier for licence-changing commands whenever possible.
+
+## What does appfit wrap?
+
+appfit is the safety and compatibility layer around three lower-level pieces:
+
+| Component | appfit uses it for |
+|---|---|
+| **Apple's public iTunes Search API** | App lookup, current version, and current minimum iOS. |
+| **ipatool** | Apple-ID login, signed App Store requests, free licence claims, build history, metadata, and IPA downloads. |
+| **pymobiledevice3** | USB discovery, trusted-device connection, IPA upload, and iOS Installation Proxy. |
+
+The optimized helper installed by `appfit ipatool install` builds official
+ipatool v2.4.0 at a pinned commit and applies appfit's small metadata patch. The
+patch exposes `MinimumOSVersion` and `UIDeviceFamily` from ipatool's existing
+partial-ZIP read, so appfit normally downloads only the winning IPA.
+
+`brew install ipatool` is supported as a fallback, but the unpatched release may
+need full candidate IPA downloads during a cold resolve. Set
+`APPFIT_IPATOOL=/path/to/ipatool` to choose a specific binary explicitly.
+
+## What v2 verified
+
+On 2026-08-31, the test iPad was rebooted out of Dopamine jailbreak mode. appfit
+resolved a 277-build Termius history, selected v6.3.0 (minimum iOS 16.0, iPhone
+and iPad families), downloaded only that build, installed it through stock iOS,
+and the user confirmed it launched. FAST Speed Test was also installed and
+launched through the same path.
+
+That verifies the mechanism on those apps and that device. It does not guarantee
+that every app has a compatible build or that declared compatibility covers RAM,
+GPU, Metal, server-side, or account restrictions.
+
+## Cache and disk space
+
+Resolved builds are stored in `~/.config/appfit/cache.json`. Downloaded IPAs are
+stored in `~/.config/appfit/ipa/` and reused by later commands.
+
+```bash
+appfit cache list
+appfit cache export > seed.json
+appfit cache import seed.json
+
+appfit cache prune          # dry-run; deletes nothing
+appfit cache prune --yes    # permanently delete the displayed candidates
+```
+
+Prune protects referenced winners, recent files, symlinks, unrelated filenames,
+and files that changed after the dry-run. It fails closed if the cache cannot be
+read safely. `cache clear` removes metadata only; it does not delete IPAs.
+
+Exported cache metadata contains no password, Apple ID, or App Store session,
+but it does reveal app bundle IDs and target versions. Review it before sharing.
+
+## What appfit does not do
+
+- It does not decrypt IPAs or bypass FairPlay.
+- It does not make random third-party IPA downloads safe or account-compatible.
+- It does not bypass paid-app, region, removal, or account eligibility rules.
+- It cannot guarantee Apple's on-device older-version offer.
+- It checks declared iOS/device-family compatibility, not every hardware or
+  server-side runtime requirement.
+- Its historical search assumes minimum iOS usually rises over time and checks
+  only the next three builds for a nearby reversal.
+
+## CI/CD and releases
+
+- **CI:** pushes and pull requests test Python 3.10 and 3.14 on macOS and build a
+  wheel without using Apple credentials or a physical device.
+- **CD:** a pushed `v*` tag verifies the tag against `pyproject.toml` and the
+  changelog, reruns offline tests, builds a wheel and source archive, and creates
+  a GitHub Release containing both artifacts.
+- The release workflow does **not** publish to PyPI.
+
+Development guidance is in [CONTRIBUTING.md](CONTRIBUTING.md), release history in
+[CHANGELOG.md](CHANGELOG.md), and private-reporting guidance in
+[SECURITY.md](SECURITY.md).
+
+appfit is independent and is not affiliated with or endorsed by Apple Inc.
 
 ## License
 
 [MIT](LICENSE)
-
-## Tests
-
-```bash
-pytest              # 80 tests
-pytest -m "not network"
-```
-
-The ZIP range reader is tested against a synthetic IPA served by a local
-range-capable HTTP server, and the build search against fake histories — so both
-run without credentials or network.
