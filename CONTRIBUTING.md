@@ -33,6 +33,16 @@ logs.
   exact official commit and test real compatibility metadata before updating the
   manifest constants.
 
+## CI/CD
+
+Pushes to `main` and pull requests run the offline test suite on macOS with
+Python 3.10 and 3.14, then build a wheel. CI must not use Apple credentials or a
+physical device.
+
+Tags matching `v*` start the release workflow. It verifies the tag against the
+package version and changelog, repeats the offline tests, builds wheel and source
+archives, and publishes both to a GitHub Release. It does not publish to PyPI.
+
 ## Releases
 
 1. Update `pyproject.toml` and add a dated version heading to `CHANGELOG.md`.
@@ -41,6 +51,5 @@ logs.
 3. Push the release commit to `main` and wait for CI to pass.
 4. Create and push an annotated `v<version>` tag.
 
-The tag-triggered Release workflow repeats the offline tests, builds wheel and
-source archives, and publishes both to a GitHub Release. It does not publish to
-PyPI.
+Confirm the resulting GitHub Release contains both archives and that its public
+installation instructions match the released wheel filename.

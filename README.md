@@ -1,7 +1,5 @@
 # appfit
 
-[![CI](https://github.com/BnS2/appfit/actions/workflows/ci.yml/badge.svg)](https://github.com/BnS2/appfit/actions/workflows/ci.yml)
-
 Install an account-owned historical App Store build that still fits an older
 iPhone or iPad. appfit uses Apple's store package and stock iOS installation;
 it does not require a decrypted IPA, AppSync, or an active jailbreak.
@@ -73,28 +71,18 @@ appfit ipatool status
 If the browser saved the wheel somewhere else, replace the path after
 `pip install` with that location.
 
-### Alternative: install from source
+The `[device]` extra installs USB support. For the cable-free v1 path only,
+omit `[device]` when installing the wheel:
 
 ```bash
-git clone https://github.com/BnS2/appfit.git
-cd appfit
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[device]"
-
-appfit ipatool install
-appfit ipatool status
+pip install "$HOME/Downloads/appfit-0.2.0-py3-none-any.whl"
 ```
 
-The `[device]` extra installs USB support. For the cable-free v1 path only,
-omit `[device]` when installing the wheel, or use `pip install -e .` from source.
-
-When opening a new Terminal later, return to the repository and reactivate the
+When opening a new Terminal later, return to the appfit folder and reactivate the
 environment:
 
 ```bash
-cd appfit
+cd "$HOME/appfit"
 source .venv/bin/activate
 ```
 
@@ -256,18 +244,14 @@ but it does reveal app bundle IDs and target versions. Review it before sharing.
 - Its historical search assumes minimum iOS usually rises over time and checks
   only the next three builds for a nearby reversal.
 
-## CI/CD and releases
+## Downloads and project information
 
-- **CI:** pushes and pull requests test Python 3.10 and 3.14 on macOS and build a
-  wheel without using Apple credentials or a physical device.
-- **CD:** a pushed `v*` tag verifies the tag against `pyproject.toml` and the
-  changelog, reruns offline tests, builds a wheel and source archive, and creates
-  a GitHub Release containing both artifacts.
-- The release workflow does **not** publish to PyPI.
+Download appfit from [GitHub Releases](https://github.com/BnS2/appfit/releases).
+appfit is not currently published on PyPI.
 
-Development guidance is in [CONTRIBUTING.md](CONTRIBUTING.md), release history in
-[CHANGELOG.md](CHANGELOG.md), and private-reporting guidance in
-[SECURITY.md](SECURITY.md).
+See [CHANGELOG.md](CHANGELOG.md) for release history, [SECURITY.md](SECURITY.md)
+for private security reporting, and [CONTRIBUTING.md](CONTRIBUTING.md) if you
+want to work on appfit itself.
 
 appfit is independent and is not affiliated with or endorsed by Apple Inc.
 
