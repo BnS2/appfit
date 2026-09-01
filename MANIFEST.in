@@ -3,5 +3,8 @@ include CONTRIBUTING.md
 include LICENSE
 include README.md
 include SECURITY.md
+include THIRD_PARTY_NOTICES.md
+include assets/appfit-icon-1024.png
 recursive-include scripts *.py
 recursive-include src/appfit/data *.patch
+prune src/appfit/bin

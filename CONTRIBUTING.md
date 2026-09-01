@@ -12,6 +12,14 @@ python3 -m venv .venv
 .venv/bin/pytest -m "not network"
 ```
 
+For GUI development and offscreen widget tests:
+
+```bash
+.venv/bin/pip install -e ".[dev,gui]"
+QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/test_gui.py tests/test_workflows.py
+.venv/bin/appfit-gui
+```
+
 The public iTunes lookup tests are opt-in because they depend on an external
 service:
 
@@ -36,8 +44,13 @@ logs.
 ## CI/CD
 
 Pushes to `main` and pull requests run the offline test suite on macOS with
-Python 3.10 and 3.14, then build a wheel. CI must not use Apple credentials or a
-physical device.
+Python 3.10 and 3.14, build a wheel, and run the GUI/widget suite offscreen on
+Python 3.12. CI must not use Apple credentials or a physical device.
+
+The manually triggered `macOS App` workflow builds unsigned test bundles for
+Apple silicon and Intel. Public GUI release artifacts must additionally be
+Developer ID signed, hardened-runtime enabled, notarized, and stapled; do not
+publish the unsigned test artifacts as a release.
 
 Tags matching `v*` start the release workflow. It verifies the tag against the
 package version and changelog, repeats the offline tests, builds wheel and source
@@ -53,3 +66,20 @@ archives, and publishes both to a GitHub Release. It does not publish to PyPI.
 
 Confirm the resulting GitHub Release contains both archives and that its public
 installation instructions match the released wheel filename.
+
+## Build the Mac application locally
+
+Use a Python 3.12 environment so the frozen runtime has a stable deployment
+baseline:
+
+```bash
+python3.12 -m venv .venv-build
+.venv-build/bin/pip install -e ".[gui,package]"
+.venv-build/bin/python scripts/build_macos_app.py
+```
+
+The build compiles the pinned patched ipatool, places it inside the bundle,
+generates the icon family from `assets/appfit-icon-1024.png`, produces
+`deployment/appfit-<architecture>.app`, sets a macOS 13 minimum, and applies an
+ad-hoc signature for local testing. Release signing and notarization are
+intentionally separate credentialed steps.

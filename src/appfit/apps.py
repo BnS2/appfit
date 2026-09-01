@@ -32,6 +32,7 @@ class App:
     # the store returns *something* for almost any nonsense term, and claiming
     # blindly puts a stranger's app in the user's purchase history for good.
     matched_exactly: bool = True
+    artwork_url: str = ""
 
     def __str__(self) -> str:
         return f"{self.name} ({self.bundle_id}, id {self.app_id})"
@@ -49,6 +50,7 @@ def _from_result(r: dict) -> App:
         current_version=r.get("version", ""),
         minimum_os=r.get("minimumOsVersion", ""),
         seller=r.get("sellerName", ""),
+        artwork_url=r.get("artworkUrl100", ""),
     )
 
 

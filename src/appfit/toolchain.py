@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -55,6 +56,16 @@ def _manifest_path() -> Path:
     return managed_ipatool_path().with_name("manifest.json")
 
 
+def bundled_ipatool_path() -> Path:
+    """Architecture-specific helper shipped inside a desktop app, if present."""
+    architecture = platform.machine().lower()
+    if architecture in {"aarch64", "arm64"}:
+        architecture = "arm64"
+    elif architecture in {"amd64", "x86_64"}:
+        architecture = "x86_64"
+    return Path(__file__).resolve().parent / "bin" / architecture / "ipatool"
+
+
 def _executable(command: str | Path) -> Path | None:
     found = shutil.which(str(command))
     return Path(found).resolve() if found else None
@@ -65,6 +76,10 @@ def selected_ipatool() -> tuple[Path | None, str]:
     override = os.environ.get(IPATOOL_ENV)
     if override:
         return _executable(override), "environment"
+
+    bundled = bundled_ipatool_path()
+    if bundled.is_file() and os.access(bundled, os.X_OK):
+        return bundled, "appfit-bundled"
 
     managed = managed_ipatool_path()
     if managed.is_file() and os.access(managed, os.X_OK):
@@ -93,9 +108,14 @@ def status() -> IpatoolStatus:
         return IpatoolStatus(None, "missing")
 
     compatibility: bool | None = None
-    if source == "appfit-managed":
+    if source in {"appfit-managed", "appfit-bundled"}:
         try:
-            manifest = json.loads(_manifest_path().read_text())
+            manifest_path = (
+                binary.with_name("manifest.json")
+                if source == "appfit-bundled"
+                else _manifest_path()
+            )
+            manifest = json.loads(manifest_path.read_text())
         except (OSError, json.JSONDecodeError):
             manifest = {}
         if (

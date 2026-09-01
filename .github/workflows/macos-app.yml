@@ -1,0 +1,50 @@
+name: macOS App (unsigned test bundles)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install build dependencies
+        run: python -m pip install -e ".[dev,gui,package]"
+      - name: Run offline and GUI tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -m "not network"
+      - name: Build self-contained application
+        run: python scripts/build_macos_app.py
+      - name: Verify and smoke-test bundle
+        env:
+          QT_QPA_PLATFORM: offscreen
+          XDG_CONFIG_HOME: ${{ runner.temp }}/appfit-smoke-config
+        run: |
+          APP_PATH="deployment/appfit-$(uname -m).app"
+          codesign --verify --deep --strict "$APP_PATH"
+          "$APP_PATH/Contents/MacOS/appfit" &
+          APP_PID=$!
+          sleep 5
+          kill -0 "$APP_PID"
+          kill "$APP_PID"
+          wait "$APP_PID" || true
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP_PATH" "deployment/appfit-$(uname -m)-unsigned.zip"
+      - name: Upload unsigned test bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: appfit-${{ matrix.runner }}-unsigned
+          path: deployment/*-unsigned.zip

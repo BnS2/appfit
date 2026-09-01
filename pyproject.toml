@@ -1,6 +1,6 @@
 [project]
 name = "appfit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Get modern apps onto aged-out iOS devices via Apple's own last-compatible-version mechanism"
 readme = "README.md"
 license = "MIT"
@@ -14,6 +14,8 @@ dependencies = [
 
 [project.optional-dependencies]
 device = ["pymobiledevice3>=11.0"]
+gui = ["PySide6>=6.8,<7", "pymobiledevice3>=11.0"]
+package = ["PyInstaller>=6.15,<7"]
 dev = ["pytest>=8.0"]
 
 [project.urls]
@@ -24,6 +26,7 @@ Changelog = "https://github.com/BnS2/appfit/blob/main/CHANGELOG.md"
 
 [project.scripts]
 appfit = "appfit.cli:app"
+appfit-gui = "appfit.gui_main:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -34,3 +37,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 appfit = ["data/*.patch"]
+
+[tool.setuptools.exclude-package-data]
+appfit = ["bin/*/ipatool", "bin/*/manifest.json"]

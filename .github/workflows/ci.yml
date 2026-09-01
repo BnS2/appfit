@@ -32,3 +32,21 @@ jobs:
         run: pytest -m "not network"
       - name: Build wheel
         run: python -m pip wheel --no-deps --wheel-dir dist .
+
+  gui-test:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install GUI test dependencies
+        run: python -m pip install -e ".[dev,gui]"
+      - name: Run GUI and workflow tests offscreen
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -q tests/test_gui.py tests/test_workflows.py
+      - name: Verify desktop entry point
+        run: python -c "from appfit.gui_main import main; assert callable(main)"

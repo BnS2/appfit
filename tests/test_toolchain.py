@@ -18,6 +18,9 @@ def _executable(path: Path, content: bytes = b"helper") -> Path:
 
 def test_selected_ipatool_prefers_environment_then_managed(tmp_path, monkeypatch):
     monkeypatch.setattr(toolchain.accounts, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        toolchain, "bundled_ipatool_path", lambda: tmp_path / "missing-bundled"
+    )
     path_binary = _executable(tmp_path / "path" / "ipatool")
     managed = _executable(toolchain.managed_ipatool_path())
     override = _executable(tmp_path / "override" / "ipatool")
@@ -33,6 +36,15 @@ def test_selected_ipatool_prefers_environment_then_managed(tmp_path, monkeypatch
     selected, source = toolchain.selected_ipatool()
     assert selected == override.resolve()
     assert source == "environment"
+
+
+def test_selected_ipatool_prefers_bundled_over_managed(tmp_path, monkeypatch):
+    monkeypatch.setattr(toolchain.accounts, "config_dir", lambda: tmp_path)
+    bundled = _executable(tmp_path / "bundle" / "ipatool")
+    _executable(toolchain.managed_ipatool_path())
+    monkeypatch.setattr(toolchain, "bundled_ipatool_path", lambda: bundled)
+
+    assert toolchain.selected_ipatool() == (bundled, "appfit-bundled")
 
 
 def test_install_managed_ipatool_pins_source_and_writes_manifest(tmp_path, monkeypatch):
@@ -94,6 +106,9 @@ def test_install_rejects_moved_release_tag(tmp_path, monkeypatch):
 
 def test_status_trusts_only_matching_managed_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(toolchain.accounts, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        toolchain, "bundled_ipatool_path", lambda: tmp_path / "missing-bundled"
+    )
     binary = _executable(toolchain.managed_ipatool_path())
     binary.with_name("manifest.json").write_text(
         json.dumps(
@@ -110,6 +125,26 @@ def test_status_trusts_only_matching_managed_manifest(tmp_path, monkeypatch):
     assert current.path == binary
     assert current.source == "appfit-managed"
     assert current.version == "ipatool version test"
+    assert current.compatibility_metadata is True
+
+
+def test_status_trusts_matching_bundled_manifest(tmp_path, monkeypatch):
+    binary = _executable(tmp_path / "bundle" / "ipatool")
+    binary.with_name("manifest.json").write_text(
+        json.dumps(
+            {
+                "revision": toolchain.IPATOOL_REVISION,
+                "compatibility_metadata": True,
+            }
+        )
+    )
+    monkeypatch.setattr(toolchain, "bundled_ipatool_path", lambda: binary)
+    monkeypatch.setattr(toolchain, "_version", lambda _binary: "bundled test")
+
+    current = toolchain.status()
+
+    assert current.path == binary
+    assert current.source == "appfit-bundled"
     assert current.compatibility_metadata is True
 
 

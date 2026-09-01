@@ -4,9 +4,10 @@ Install an account-owned historical App Store build that still fits an older
 iPhone or iPad. appfit uses Apple's store package and stock iOS installation;
 it does not require a decrypted IPA, AppSync, or an active jailbreak.
 
-> **Current status:** appfit's command-line modes are available and tested on
-> macOS with an iPad 5 (`iPad6,11`) running iOS 16.7.16. A friendlier Mac GUI is
-> planned and does not exist yet.
+> **Current status:** appfit's command-line modes are available in v0.2 and
+> tested on macOS with an iPad 5 (`iPad6,11`) running iOS 16.7.16. The v0.3
+> source now includes a Mac compatible-build finder GUI; a signed downloadable
+> GUI release has not been published yet.
 
 ## What problem does it solve?
 
@@ -29,14 +30,14 @@ a missing build or force Apple to offer one.
 
 ## Choose a mode
 
-appfit currently offers two command-line modes. A Mac GUI is planned as another
-way to use those same capabilities, not as a separate backend.
+appfit offers two command-line modes and a Mac GUI over the same compatibility,
+account-safety, download, and installation backend.
 
 | Mode or interface | Status | USB | What it does |
 |---|---|---:|---|
 | **Licence mode** | Available | Not required | Claims a free licence and prints Apple's Purchased-tab steps. Apple may offer its last compatible build on the device. |
 | **Direct Install mode** | Available | Required | Resolves, downloads, verifies, and installs the fitting store IPA directly. |
-| **Mac GUI** | Planned | Optional by task | Will provide a non-developer interface for the existing modes. |
+| **Mac GUI** | Available in v0.3 source | Optional by task | Searches by name or identifier, detects or accepts a target iOS version, recommends the newest compatible build, lazily offers older builds, and exposes the existing actions. |
 
 For the most predictable working path today, use Direct Install mode with a Mac
 and USB cable.
@@ -87,6 +88,39 @@ environment:
 cd "$HOME/appfit"
 source .venv/bin/activate
 ```
+
+### Run the v0.3 GUI from source
+
+Until signed GUI artifacts are published, developers can run it from a checkout:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[gui]"
+.venv/bin/appfit ipatool install
+.venv/bin/appfit-gui
+```
+
+The GUI has one primary flow:
+
+1. check the compact App Store, Apple ID, and device readiness strip;
+2. select a connected device to detect iOS automatically, or choose **Manual
+   iOS target** and type a version such as `16.7.16`;
+3. search by app name, bundle ID, numeric App Store ID, or App Store URL, then
+   select the matching artwork-backed result;
+4. confirm the account-owned licence lookup and accept the recommended newest
+   compatible build;
+5. optionally load older verified versions in pages of ten; and
+6. install over USB, download the selected encrypted IPA, or show the
+   licence-only on-device instructions.
+
+The focused workspace keeps progress concise by default, with full activity
+details available on demand. Command-F focuses search and Command-R refreshes
+account and device readiness.
+
+Historical build lookup requires the active Apple ID and may add a free app to
+that account's Purchased history. appfit confirms this before resolving. The
+password and two-factor prompt still run directly in ipatool's Terminal session,
+so the GUI does not receive or store either value.
 
 ## First-time account setup
 

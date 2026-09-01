@@ -5,12 +5,30 @@ All notable changes to appfit are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.3.0 - 2026-09-01
+
+### Added
+
+- A PySide6 Mac compatible-build finder with connected-device iOS detection,
+  editable manual iOS targets, App Store search, newest-compatible
+  recommendation, and lazy pages of verified older versions.
+- GUI actions for account-safe licence claims, exact-version downloads, local
+  IPA verification, device pairing, and USB installation.
+- Structured GUI-safe workflow results and progress events, a bundled patched
+  ipatool lookup path, offscreen widget tests, and reproducible arm64/x86_64 Mac
+  bundle tooling.
+- A focused macOS workspace with compact readiness states, contextual primary
+  actions, App Store artwork, keyboard shortcuts, accessible labels, and a
+  purpose-built appfit application icon.
 
 ### Changed
 
 - Public documentation now describes Licence and Direct Install as modes,
   reserving version numbers for appfit releases and internal data formats.
+- The source package version is now 0.3.0 for the GUI release.
+- The provisional stacked-form GUI was replaced before release with a compact,
+  light/dark-aware Mac utility layout while preserving its safety confirmations
+  and backend workflows.
 
 ## 0.2.0 - 2026-08-31
 
