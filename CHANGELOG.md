@@ -5,6 +5,38 @@ All notable changes to appfit are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.1 - 2026-09-04
+
+### Added
+
+- A drag-to-Applications disk image for the Mac app, published for Apple
+  silicon and Intel with each release. It carries the App Store helper, so
+  installing it needs neither Python nor Go.
+
+### Fixed
+
+- Version lookup for apps whose newest release the App Store declines to serve.
+  Apple returns an app's build history only alongside a build it will hand
+  back, so a declined current release hid the whole history and ended the
+  search before any compatibility check ran. appfit now re-reads the history
+  from a build it has already recorded and continues.
+- Builds the App Store declines are no longer recommended or offered for
+  download.
+
+### Changed
+
+- Store refusals are reported in plain language — which app Apple is not
+  offering, that the target device is not the cause, and when to retry — in
+  place of ipatool's `invalid response`. The Mac GUI shows the detail beneath a
+  one-line headline; the command line indents continuation lines under the
+  failure.
+- The pinned ipatool patch also reports `externalVersionIdentifiers` from
+  `get-version-metadata`, which is what makes history recovery possible.
+- The README is organised around how appfit is used — Mac app or terminal, with
+  a cable or without — rather than around its modes, and shows the Mac app.
+  `scripts/capture_screenshots.py` renders those images from stand-in data, so
+  no Apple ID, device name, or UDID appears in them.
+
 ## 0.3.0 - 2026-09-01
 
 ### Added
