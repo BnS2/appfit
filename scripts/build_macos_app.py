@@ -3,6 +3,10 @@
 The build deliberately stages the pinned patched ipatool inside the Python
 package before invoking PyInstaller with Qt support. The staged binary and
 generated deployment files are ignored by git.
+
+The result is also packaged as a drag-to-Applications disk image, which is the
+only install path that needs neither Python nor Go on the target Mac: the
+patched helper travels inside the bundle.
 """
 
 from __future__ import annotations
@@ -54,6 +58,47 @@ def stage_helper() -> Path:
     return destination
 
 
+def package_disk_image(bundle: Path, version: str) -> Path:
+    """Wrap the bundle in a drag-to-Applications disk image.
+
+    The image carries the app beside a symlink to /Applications so the install
+    is the gesture Mac users already know. `copytree(symlinks=True)` matters:
+    Qt frameworks are full of internal symlinks, and resolving them would both
+    double the size and break the code signature.
+    """
+    staging = DEPLOYMENT / "dmg-staging"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    shutil.copytree(bundle, staging / "appfit.app", symlinks=True)
+    (staging / "Applications").symlink_to("/Applications")
+
+    image = DEPLOYMENT / f"appfit-{version}-{architecture()}.dmg"
+    image.unlink(missing_ok=True)
+    result = subprocess.run(
+        [
+            "hdiutil",
+            "create",
+            "-volname",
+            f"appfit {version}",
+            "-srcfolder",
+            str(staging),
+            "-ov",
+            "-format",
+            "UDZO",
+            str(image),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        raise SystemExit(
+            f"hdiutil failed: {(result.stderr or result.stdout).strip()}"
+        )
+    shutil.rmtree(staging)
+    return image
+
+
 def main() -> None:
     if sys.platform != "darwin":
         raise SystemExit("the desktop bundle is currently macOS-only")
@@ -65,6 +110,11 @@ def main() -> None:
         "--skip-helper",
         action="store_true",
         help="reuse an already staged architecture-specific ipatool",
+    )
+    parser.add_argument(
+        "--skip-dmg",
+        action="store_true",
+        help="build the .app only, without the drag-to-Applications image",
     )
     args = parser.parse_args()
 
@@ -157,6 +207,8 @@ def main() -> None:
         check=True,
     )
     print(destination)
+    if not args.skip_dmg:
+        print(package_disk_image(destination, version))
 
 
 if __name__ == "__main__":

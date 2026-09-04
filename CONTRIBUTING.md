@@ -54,7 +54,8 @@ publish the unsigned test artifacts as a release.
 
 Tags matching `v*` start the release workflow. It verifies the tag against the
 package version and changelog, repeats the offline tests, builds wheel and source
-archives, and publishes both to a GitHub Release. It does not publish to PyPI.
+archives, builds the Apple silicon and Intel disk images, and publishes them all
+to a GitHub Release. It does not publish to PyPI.
 
 ## Releases
 
@@ -64,8 +65,9 @@ archives, and publishes both to a GitHub Release. It does not publish to PyPI.
 3. Push the release commit to `main` and wait for CI to pass.
 4. Create and push an annotated `v<version>` tag.
 
-Confirm the resulting GitHub Release contains both archives and that its public
-installation instructions match the released wheel filename.
+Confirm the resulting GitHub Release contains both archives and both disk
+images, and that the public installation instructions match the released wheel
+filename.
 
 ## Build the Mac application locally
 
@@ -81,5 +83,17 @@ python3.12 -m venv .venv-build
 The build compiles the pinned patched ipatool, places it inside the bundle,
 generates the icon family from `assets/appfit-icon-1024.png`, produces
 `deployment/appfit-<architecture>.app`, sets a macOS 13 minimum, and applies an
-ad-hoc signature for local testing. Release signing and notarization are
-intentionally separate credentialed steps.
+ad-hoc signature for local testing. It then wraps the bundle in
+`deployment/appfit-<version>-<architecture>.dmg` alongside an Applications
+symlink; pass `--skip-dmg` to build the app alone. Release signing and
+notarization are intentionally separate credentialed steps.
+
+## Refresh the README screenshots
+
+```bash
+.venv/bin/python scripts/capture_screenshots.py
+```
+
+The window is driven with stand-in account, device, and build data, so the
+images in `assets/screenshots/` never contain an Apple ID, a device name, or a
+UDID. Re-run it after changing the desktop layout.

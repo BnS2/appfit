@@ -1,4 +1,4 @@
-name: macOS App (unsigned test bundles)
+name: macOS App (unsigned test builds)
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest -m "not network"
-      - name: Build self-contained application
+      - name: Build application and disk image
         run: python scripts/build_macos_app.py
       - name: Verify and smoke-test bundle
         env:
@@ -41,10 +41,8 @@ jobs:
           kill -0 "$APP_PID"
           kill "$APP_PID"
           wait "$APP_PID" || true
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$APP_PATH" "deployment/appfit-$(uname -m)-unsigned.zip"
-      - name: Upload unsigned test bundle
+      - name: Upload unsigned disk image
         uses: actions/upload-artifact@v7
         with:
           name: appfit-${{ matrix.runner }}-unsigned
-          path: deployment/*-unsigned.zip
+          path: deployment/*.dmg
