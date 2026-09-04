@@ -43,9 +43,15 @@ class BuildInfo:
     display_version: str
     device_families: list[int]
     source: str  # which strategy answered
+    # False when the store declined to serve this build at all. Such a build can
+    # never be the answer -- it cannot be downloaded, let alone installed -- so
+    # it fails every compatibility test regardless of what it requires.
+    available: bool = True
 
     def runs_on(self, ios_version: str) -> bool:
         """Minimum-OS check alone. Enough when no hardware family is known."""
+        if not self.available:
+            return False
         return version_tuple(self.minimum_os) <= version_tuple(ios_version)
 
     def fits(self, target) -> bool:
@@ -60,7 +66,7 @@ class BuildInfo:
         `target.device_family` is None when the user typed --ios with no cable.
         Unknown never rejects a build -- it only means we cannot rule one out.
         """
-        if not self.runs_on(target.ios_version):
+        if not self.available or not self.runs_on(target.ios_version):
             return False
         if self.device_families and target.device_family is not None:
             return target.device_family in self.device_families

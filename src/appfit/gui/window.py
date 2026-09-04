@@ -1021,10 +1021,27 @@ class AppfitWindow(QMainWindow):
             self.progress_bar.setValue(min(event.current, event.total))
 
     def _show_error(self, message: str) -> None:
-        self.activity_summary.setText(f"Could not continue — {message}")
+        """Show a failure without letting a long explanation eat the window.
+
+        Some store failures need several lines to be actionable -- what the
+        store did, why it hides the version history, and what to do instead --
+        so the headline goes to the one-line summary and the rest becomes the
+        dialog's detail text. The activity log keeps the whole thing.
+        """
+        headline, _, detail = message.strip().partition("\n")
+        detail = "\n".join(line.strip() for line in detail.splitlines()).strip()
+
+        self.activity_summary.setText(f"Could not continue — {headline}")
         self.activity.appendPlainText(f"Error: {message}")
         self._toggle_activity(True)
-        QMessageBox.critical(self, "appfit could not continue", message)
+
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Critical)
+        dialog.setWindowTitle("appfit could not continue")
+        dialog.setText(headline)
+        if detail:
+            dialog.setInformativeText(detail)
+        dialog.exec()
 
     def _update_enabled_state(self) -> None:
         ready = self._busy == 0

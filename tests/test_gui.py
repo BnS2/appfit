@@ -386,3 +386,36 @@ def test_pairing_during_install_preserves_resolution(application, monkeypatch):
     assert started
     assert "Paired with owner@example.com" in window.target_detail.text()
     window.close()
+
+
+def test_long_store_explanation_keeps_the_summary_line_readable(
+    application, monkeypatch
+):
+    """A refused build needs several lines to be actionable.
+
+    All of it belongs in the log and the dialog, but the one-line activity
+    summary must stay a summary rather than swallowing the whole explanation.
+    """
+    window = make_window(application, monkeypatch)
+    shown = {}
+    monkeypatch.setattr(
+        QMessageBox,
+        "exec",
+        lambda self: shown.update(
+            text=self.text(), detail=self.informativeText()
+        ),
+    )
+
+    window._show_error(
+        "the App Store served no build for com.example.app.\n"
+        "  The store answered normally but returned an empty package list.\n"
+        "  Retry in a few days."
+    )
+
+    assert window.activity_summary.text() == (
+        "Could not continue — the App Store served no build for com.example.app."
+    )
+    assert shown["text"] == "the App Store served no build for com.example.app."
+    assert "Retry in a few days." in shown["detail"]
+    assert "empty package list" in window.activity.toPlainText()
+    window.close()

@@ -22,7 +22,14 @@ from .resolve import (
     metadata_probe,
     newest_compatible,
 )
-from .store import IpatoolMissing, StoreClient, StoreError, login_interactively
+from .workflows import refusal_message
+from .store import (
+    BuildNotServed,
+    IpatoolMissing,
+    StoreClient,
+    StoreError,
+    login_interactively,
+)
 
 app = typer.Typer(
     help="Get modern apps onto aged-out iOS devices.",
@@ -38,7 +45,16 @@ app.add_typer(ipatool_app, name="ipatool")
 
 
 def _err(message: str) -> None:
-    typer.secho(f"✗ {message}", fg=typer.colors.RED, err=True)
+    """Fail with an explanation that can run to more than one line.
+
+    Some store failures need a paragraph to be actionable, so continuation
+    lines are indented under the marker instead of starting at column zero and
+    reading as separate errors.
+    """
+    headline, _, rest = message.partition("\n")
+    typer.secho(f"✗ {headline}", fg=typer.colors.RED, err=True)
+    for line in rest.splitlines():
+        typer.secho(f"  {line}" if line.strip() else "", fg=typer.colors.RED, err=True)
     raise typer.Exit(1)
 
 
@@ -279,6 +295,31 @@ def _download_progress():
     return report
 
 
+def _version_ids(client: StoreClient, store_app: App) -> list[str]:
+    """History for `store_app`, recovered from a known build if need be.
+
+    Mirrors BuildWorkflow._version_ids: the store hides an app's history behind
+    the build it will serve, so a refused current build hides the older builds
+    too unless appfit re-reads the list off one it already knows.
+    """
+    bundle_id = store_app.bundle_id
+    try:
+        return client.version_ids(bundle_id)
+    except BuildNotServed:
+        for seed in cache.known_version_ids(bundle_id):
+            try:
+                recovered = client.version_ids_from(bundle_id, seed)
+            except (BuildNotServed, StoreError):
+                continue
+            if recovered:
+                _warn(
+                    "the store is not serving this app's current build; "
+                    "read its history from a build appfit already knows"
+                )
+                return recovered
+        _err(refusal_message(store_app))
+
+
 def _do_resolve(
     client: StoreClient,
     store_app: App,
@@ -303,7 +344,7 @@ def _do_resolve(
         return result
 
     try:
-        version_ids = client.version_ids(store_app.bundle_id)
+        version_ids = _version_ids(client, store_app)
     except StoreError as exc:
         _err(str(exc))
 

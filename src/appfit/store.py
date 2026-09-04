@@ -50,6 +50,23 @@ class WrongAccount(StoreError):
     """The signed-in Apple ID is not the one this device is paired to."""
 
 
+class BuildNotServed(StoreError):
+    """The store answered normally but handed back no package.
+
+    Apple reports "I will not serve this build" as a successful response with an
+    empty song list rather than as a failure, and ipatool renders that as the
+    bare string "invalid response". It is worth its own type because it is not
+    an appfit fault, not an account fault, and -- crucially -- recoverable: only
+    the named build is refused, so any other build of the same app still
+    answers. See `StoreClient.version_ids_from`.
+    """
+
+
+# ipatool's wording for an empty song list, across list-versions,
+# get-version-metadata, and download alike.
+_EMPTY_RESPONSE = "invalid response"
+
+
 @dataclass
 class Account:
     email: str
@@ -154,11 +171,14 @@ def _run(
                 continue
 
     if returncode != 0 or payload.get("success") is False:
-        raise StoreError(
+        message = (
             payload.get("error")
             or (stderr or "").strip()
             or f"ipatool {' '.join(args)} failed (exit {returncode})"
         )
+        if str(message).strip().lower() == _EMPTY_RESPONSE:
+            raise BuildNotServed(message)
+        raise StoreError(message)
     return payload
 
 
@@ -213,9 +233,41 @@ class StoreClient:
     # -------------------------------------------------------------- builds
 
     def version_ids(self, bundle_id: str) -> list[str]:
-        """Every build available to the signed-in account, oldest first."""
-        data = _run(["list-versions", "-b", bundle_id], timeout=180)
+        """Every build available to the signed-in account, oldest first.
+
+        The store carries the history on the build it serves, and this request
+        names no build -- so it implicitly asks about the current one. When the
+        store refuses that build the history is unreachable through this call
+        even though every older build is still intact; `version_ids_from` is
+        the way back in.
+        """
+        try:
+            data = _run(["list-versions", "-b", bundle_id], timeout=180)
+        except BuildNotServed as exc:
+            # Technical wording on purpose: the presentation layers know the
+            # app's name and rewrite this for the person reading it. See
+            # workflows.refusal_message.
+            raise BuildNotServed(
+                f"the App Store returned no package for {bundle_id}, so its "
+                "version history is unreadable"
+            ) from exc
         return [str(v) for v in data.get("externalVersionIdentifiers", [])]
+
+    def version_ids_from(self, bundle_id: str, version_id: str) -> list[str]:
+        """The same history, read off one specific build instead of the newest.
+
+        Every item the store serves carries the app's whole build list, so a
+        single reachable build -- typically one appfit has already recorded in
+        its cache -- restores the history that a refused current build hides.
+        Requires appfit's managed helper; an ordinary ipatool does not emit the
+        identifiers, in which case this returns nothing and the caller reports
+        the original refusal.
+        """
+        data = _run(
+            ["get-version-metadata", "-b", bundle_id, "--external-version-id", version_id],
+            timeout=120,
+        )
+        return [str(v) for v in data.get("externalVersionIdentifiers", []) or []]
 
     def version_metadata(self, bundle_id: str, version_id: str) -> dict:
         """Range-read metadata for one build through ipatool.
@@ -248,6 +300,9 @@ class StoreClient:
             "release_date": str(data.get("releaseDate", ""))[:10],
             "minimum_os": minimum_os,
             "device_families": device_families,
+            "external_version_ids": [
+                str(v) for v in data.get("externalVersionIdentifiers", []) or []
+            ],
         }
 
     def download(
@@ -270,7 +325,17 @@ class StoreClient:
             args += ["--external-version-id", str(version_id)]
         if purchase:
             args += ["--purchase"]
-        _run(args, timeout=3600, watch=dest.parent, on_progress=on_progress)
+        try:
+            _run(args, timeout=3600, watch=dest.parent, on_progress=on_progress)
+        except BuildNotServed as exc:
+            named = f"build {version_id}" if version_id else "the current build"
+            raise BuildNotServed(
+                f"the App Store will not serve {named} of {bundle_id}.\n"
+                "  It answered normally but returned an empty package list. "
+                "Other builds of the\n"
+                "  same app are unaffected, so pick a different version, or "
+                "retry this one later."
+            ) from exc
         if not dest.exists():
             raise StoreError(f"ipatool reported success but {dest} is missing")
         return dest

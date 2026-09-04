@@ -9,7 +9,8 @@ import pytest
 from appfit import accounts, cache, workflows
 from appfit.apps import App
 from appfit.devices import Target
-from appfit.store import Account, WrongAccount
+from appfit.probe import BuildInfo
+from appfit.store import Account, BuildNotServed, WrongAccount
 from appfit.workflows import BuildWorkflow, WorkflowError, target_from_manual
 
 
@@ -259,3 +260,59 @@ def test_login_terminal_script_contains_no_credentials_beyond_email(
     assert "--password" not in contents
     assert "--auth-code" not in contents
     assert calls[0][0][:3] == ["open", "-a", "Terminal"]
+
+
+def test_refused_current_build_recovers_history_from_a_known_build(monkeypatch):
+    """A build the store will not serve must not take the history with it.
+
+    The store carries the version list on whichever build it hands back, so the
+    implicit "newest build" request fails as a unit. Any build appfit already
+    recorded reaches the same list, and those older builds are the whole point
+    of the tool.
+    """
+    client = FakeClient()
+
+    def refuse(bundle_id):
+        raise BuildNotServed("invalid response")
+
+    client.version_ids = refuse
+    client.version_ids_from = lambda bundle_id, seed: (
+        client.ids if seed == "101" else []
+    )
+    cache.put_version("com.example.app", "101", "2.0", "2021-01-01", "16.0", [1, 2])
+
+    events = []
+    recovered = BuildWorkflow(client=client)._version_ids(APP, events.append)
+
+    assert recovered == client.ids
+    assert any("current build" in event.message for event in events)
+
+
+def test_refusal_surfaces_when_no_known_build_can_reopen_the_history():
+    client = FakeClient()
+
+    def refuse(bundle_id):
+        raise BuildNotServed("the App Store served no build for com.example.app.")
+
+    client.version_ids = refuse
+    client.version_ids_from = lambda bundle_id, seed: []
+
+    with pytest.raises(WorkflowError) as failure:
+        BuildWorkflow(client=client)._version_ids(APP, lambda _e: None)
+
+    message = str(failure.value)
+    assert message.startswith("Apple is not offering Example for download")
+    assert "Your device is not the reason" in message
+
+
+def test_a_build_the_store_refuses_is_never_recommended():
+    refused = BuildInfo(
+        minimum_os="",
+        display_version="",
+        device_families=[],
+        source="unavailable",
+        available=False,
+    )
+
+    assert refused.runs_on("18.0") is False
+    assert refused.fits(Target.from_ios("18.0", "ipad")) is False

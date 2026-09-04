@@ -310,6 +310,23 @@ def version_count(bundle_id: str) -> int:
     return len(_read()["versions"].get(bundle_id, {}))
 
 
+def known_version_ids(bundle_id: str) -> list[str]:
+    """Build identifiers appfit has already seen for `bundle_id`, newest first.
+
+    Only useful as *seeds*: any one of them can be handed back to the store to
+    re-read the full history when the current build is refused. Newest first
+    because a recent build is the most likely to still be served, and because
+    the identifiers are assigned in ascending order.
+    """
+    known = _read()["versions"].get(bundle_id, {})
+    resolved = _read()["entries"]
+    seeds = set(known)
+    for entry in resolved.values():
+        if entry.get("bundle_id") == bundle_id and entry.get("external_version_id"):
+            seeds.add(str(entry["external_version_id"]))
+    return sorted(seeds, key=lambda value: (len(value), value), reverse=True)
+
+
 # ------------------------------------------------------------------ share
 
 def export_entries() -> dict:

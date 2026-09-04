@@ -31,6 +31,7 @@ from typing import Callable, Sequence
 from . import cache
 from .devices import DEFAULT_PLATFORM, Target
 from .probe import BuildInfo
+from .store import BuildNotServed
 
 # How far past the binary-search result to check for non-monotonic bumps.
 FORWARD_SCAN = 3
@@ -105,7 +106,9 @@ def newest_compatible(
                 info = seen[version_id]
                 on_probe(
                     probes,
-                    f"{info.display_version or version_id} → min iOS {info.minimum_os}",
+                    f"{info.display_version or version_id} → min iOS {info.minimum_os}"
+                    if info.available
+                    else f"build {version_id} → the store will not serve it",
                 )
         return seen[version_id]
 
@@ -245,6 +248,22 @@ def date_hint(
     return find
 
 
+def _unavailable(version_id: str) -> BuildInfo:
+    """Stand-in for a build the store refuses to serve.
+
+    The search still needs an answer for that position in the history, and the
+    honest one is "not installable": an unfetchable build cannot be the
+    recommendation no matter what it claims to require.
+    """
+    return BuildInfo(
+        minimum_os="",
+        display_version="",
+        device_families=[],
+        source="unavailable",
+        available=False,
+    )
+
+
 def metadata_probe(client, bundle_id: str, fallback: Probe) -> Probe:
     """Use ipatool's partial Info.plist read when compatibility is exposed.
 
@@ -269,6 +288,8 @@ def metadata_probe(client, bundle_id: str, fallback: Probe) -> Probe:
 
         try:
             raw = client.version_metadata(bundle_id, version_id)
+        except BuildNotServed:
+            return _unavailable(version_id)
         except Exception:
             return fallback(version_id)
 
@@ -315,13 +336,16 @@ def download_probe(
     def _probe(version_id: str) -> BuildInfo:
         dest = workdir / f"{bundle_id}-{version_id}.ipa"
         if not dest.exists():
-            client.download(
-                bundle_id,
-                dest,
-                platform=platform,
-                version_id=version_id,
-                on_progress=on_progress,
-            )
+            try:
+                client.download(
+                    bundle_id,
+                    dest,
+                    platform=platform,
+                    version_id=version_id,
+                    on_progress=on_progress,
+                )
+            except BuildNotServed:
+                return _unavailable(version_id)
         return from_ipa_file(dest)
 
     return _probe

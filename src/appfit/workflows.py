@@ -28,7 +28,7 @@ from .resolve import (
     metadata_probe,
     newest_compatible,
 )
-from .store import IpatoolMissing, StoreClient, StoreError
+from .store import BuildNotServed, IpatoolMissing, StoreClient, StoreError
 from .toolchain import selected_ipatool
 
 IOS_VERSION = re.compile(r"^\d+(?:\.\d+){0,3}$")
@@ -63,6 +63,8 @@ class BuildCandidate:
     @property
     def label(self) -> str:
         version = self.display_version or f"build {self.external_version_id}"
+        if not self.minimum_os:
+            return f"{version} — the store will not serve this build"
         detail = f"requires iOS {self.minimum_os}"
         if self.release_date:
             detail += f" · {self.release_date}"
@@ -131,6 +133,34 @@ def ipa_dir() -> Path:
     return directory
 
 
+def refusal_message(app: App) -> str:
+    """Explain, to the person waiting, why the store handed back nothing.
+
+    The store's own answer is an empty package list, which tells a user nothing
+    -- and ipatool renders it as the two words "invalid response". What matters
+    to someone holding an old iPad is that the failure is Apple's, that it is
+    about the app's newest release rather than their device, that no older build
+    was ruled out, and that it is worth trying again later.
+    """
+    name = app.name or app.bundle_id
+    release = f" ({app.current_version})" if app.current_version else ""
+    return (
+        f"Apple is not offering {name} for download right now.\n"
+        "\n"
+        "The App Store accepted appfit's request but sent back no app package. "
+        f"Apple has been doing this to builds released in the last few days, and "
+        f"{name}'s newest release{release} is one of them. appfit has to read an "
+        "app's version history from its newest release, so the older versions "
+        "are hidden as well.\n"
+        "\n"
+        "Your device is not the reason. The compatibility search never started, "
+        "and no older build was ruled out.\n"
+        "\n"
+        "Try again in a few days, or once the app ships another release. Apps "
+        "whose newest release is older than that are unaffected."
+    )
+
+
 class BuildWorkflow:
     """Synchronous application service intended to run in a worker thread."""
 
@@ -188,7 +218,7 @@ class BuildWorkflow:
                     ),
                 )
             )
-            version_ids = self.client.version_ids(app.bundle_id)
+            version_ids = self._version_ids(app, report)
         except (IpatoolMissing, StoreError) as exc:
             raise WorkflowError(str(exc)) from exc
 
@@ -276,6 +306,36 @@ class BuildWorkflow:
             source=resolution.source,
             licence_claimed=claimed,
         )
+
+    def _version_ids(self, app: App, report: ProgressCallback) -> list[str]:
+        """The app's build history, recovering when the current build is refused.
+
+        The store hides the history behind whichever build it is willing to
+        serve, so a refused current build takes the whole history with it even
+        though the older builds -- exactly the ones appfit exists to find -- are
+        still intact. Any build appfit has already recorded can be handed back
+        to re-read the same list, so seeds are tried newest first before the
+        refusal is reported.
+        """
+        bundle_id = app.bundle_id
+        try:
+            return self.client.version_ids(bundle_id)
+        except BuildNotServed as refusal:
+            for seed in cache.known_version_ids(bundle_id):
+                try:
+                    recovered = self.client.version_ids_from(bundle_id, seed)
+                except (BuildNotServed, StoreError):
+                    continue
+                if recovered:
+                    report(
+                        ProgressEvent(
+                            "resolve",
+                            "The store is not serving this app's current build; "
+                            "read its history from a build appfit already knows",
+                        )
+                    )
+                    return recovered
+            raise WorkflowError(refusal_message(app)) from refusal
 
     def older_candidates(
         self,
@@ -374,6 +434,18 @@ class BuildWorkflow:
                     ),
                 )
             info = from_ipa_file(destination)
+        except BuildNotServed as exc:
+            version = candidate.display_version or candidate.external_version_id
+            raise WorkflowError(
+                f"Apple is not offering {app.name} {version} for download "
+                "right now.\n"
+                "\n"
+                "The App Store accepted the request but sent back no app "
+                "package. Only this build is affected — other versions of the "
+                "same app still download normally.\n"
+                "\n"
+                "Choose a different version, or try this one again later."
+            ) from exc
         except (StoreError, ProbeFailed) as exc:
             raise WorkflowError(str(exc)) from exc
 

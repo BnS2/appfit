@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
 from appfit import store
 
 
@@ -87,3 +92,58 @@ def test_version_metadata_marks_released_ipatool_as_unsupported(monkeypatch):
 
     assert result["minimum_os"] == ""
     assert client.compatibility_metadata_supported is False
+
+
+def test_empty_store_response_becomes_a_distinct_recoverable_failure(monkeypatch):
+    """Apple reports "I will not serve this build" as a success with no package.
+
+    ipatool renders that as the bare word "invalid response"; appfit has to be
+    able to tell it apart from a genuine store error, because it is the one
+    failure another build of the same app can recover from.
+    """
+
+    def fake_selected():
+        return Path("/usr/bin/true"), "test"
+
+    monkeypatch.setattr(store, "selected_ipatool", fake_selected)
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            stdout='{"level":"error","error":"invalid response","success":false}',
+            stderr="",
+            returncode=1,
+        ),
+    )
+
+    with pytest.raises(store.BuildNotServed):
+        store._run(["list-versions", "-b", "com.example.app"])
+
+
+def test_refused_history_explains_itself_instead_of_repeating_ipatool(monkeypatch):
+    def refuse(args, timeout):
+        raise store.BuildNotServed("invalid response")
+
+    monkeypatch.setattr(store, "_run", refuse)
+
+    with pytest.raises(store.BuildNotServed) as failure:
+        store.StoreClient().version_ids("com.example.app")
+
+    message = str(failure.value)
+    assert "com.example.app" in message
+    assert "no package" in message
+    assert "version history" in message
+
+
+def test_history_can_be_read_off_one_known_build(monkeypatch):
+    monkeypatch.setattr(
+        store,
+        "_run",
+        lambda args, timeout: {"externalVersionIdentifiers": [100, 101, 102]},
+    )
+
+    assert store.StoreClient().version_ids_from("com.example.app", "101") == [
+        "100",
+        "101",
+        "102",
+    ]

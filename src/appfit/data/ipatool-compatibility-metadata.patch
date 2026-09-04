@@ -1,21 +1,44 @@
 diff --git a/cmd/get_version_metadata.go b/cmd/get_version_metadata.go
-index 043611d..eddbd0d 100644
+index 043611d..b2f3d82 100644
 --- a/cmd/get_version_metadata.go
 +++ b/cmd/get_version_metadata.go
-@@ -73,0 +74,2 @@ func getVersionMetadataCmd() *cobra.Command {
+@@ -73,0 +74,3 @@ func getVersionMetadataCmd() *cobra.Command {
 +					Str("minimumOSVersion", out.MinimumOSVersion).
 +					Interface("deviceFamilies", out.DeviceFamilies).
++					Interface("externalVersionIdentifiers", out.ExternalVersionIdentifiers).
 diff --git a/pkg/appstore/appstore_get_version_metadata.go b/pkg/appstore/appstore_get_version_metadata.go
-index 3a8ecdc..f412eba 100644
+index 3a8ecdc..d10fd53 100644
 --- a/pkg/appstore/appstore_get_version_metadata.go
 +++ b/pkg/appstore/appstore_get_version_metadata.go
-@@ -19,2 +19,4 @@ type GetVersionMetadataOutput struct {
+@@ -19,2 +19,5 @@ type GetVersionMetadataOutput struct {
 -	DisplayVersion string
 -	ReleaseDate    time.Time
-+	DisplayVersion   string
-+	ReleaseDate      time.Time
-+	MinimumOSVersion string
-+	DeviceFamilies   []int
++	DisplayVersion             string
++	ReleaseDate                time.Time
++	MinimumOSVersion           string
++	DeviceFamilies             []int
++	ExternalVersionIdentifiers []string
+@@ -68 +71,19 @@ func (t *appstore) GetVersionMetadata(input GetVersionMetadataInput) (GetVersion
+-	return GetVersionMetadataOutput(metadata), nil
++	// The store attaches the app's whole build history to every item it serves,
++	// so one reachable build is enough to enumerate the rest. That matters when
++	// the store refuses to serve the *current* build: list-versions asks about
++	// it implicitly and fails, while any older build still answers in full.
++	var externalVersionIdentifiers []string
++	if raw, ok := item.Metadata["softwareVersionExternalIdentifiers"].([]interface{}); ok {
++		externalVersionIdentifiers = make([]string, len(raw))
++		for i, value := range raw {
++			externalVersionIdentifiers[i] = fmt.Sprintf("%v", value)
++		}
++	}
++
++	return GetVersionMetadataOutput{
++		DisplayVersion:             metadata.DisplayVersion,
++		ReleaseDate:                metadata.ReleaseDate,
++		MinimumOSVersion:           metadata.MinimumOSVersion,
++		DeviceFamilies:             metadata.DeviceFamilies,
++		ExternalVersionIdentifiers: externalVersionIdentifiers,
++	}, nil
 diff --git a/pkg/appstore/appstore_partial_zip.go b/pkg/appstore/appstore_partial_zip.go
 index d824c43..5f9b422 100644
 --- a/pkg/appstore/appstore_partial_zip.go
