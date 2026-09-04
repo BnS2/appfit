@@ -45,28 +45,42 @@ def test_release_check_rejects_wrong_tag_and_missing_changelog_entry(tmp_path):
     ]
 
 
-def test_release_notes_lead_with_the_assets_then_quote_the_changelog(tmp_path):
-    """A reader arrives at the release page to download something.
+def test_release_notes_match_the_shape_of_earlier_releases(tmp_path):
+    """Earlier releases are the changelog entry plus a Full Changelog link.
 
-    Generated notes list commit subjects, which answers neither "which file do
-    I want" nor "what changed", so the composed notes have to carry both.
+    A body in a different shape reads as a mistake next to the ones above it,
+    so the composed notes carry no headings of their own and unwrap the
+    changelog's bullets, which a release page rewraps for itself.
     """
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(
         "# Changelog\n\n"
         "## 1.2.3 - 2026-01-02\n\n"
-        "### Fixed\n\n- Something that was broken.\n\n"
+        "### Fixed\n\n"
+        "- Something that was broken across\n  two wrapped lines.\n\n"
         "## 1.2.2 - 2025-12-01\n\n"
         "### Added\n\n- An older entry that must not leak in.\n"
     )
 
     notes = release_notes.compose("v1.2.3", changelog)
 
-    assert "appfit-1.2.3-arm64.dmg" in notes
-    assert "appfit-1.2.3-x86_64.dmg" in notes
-    assert "appfit-1.2.3-py3-none-any.whl" in notes
-    assert "Something that was broken." in notes
+    assert notes.startswith("### Fixed")
+    assert "- Something that was broken across two wrapped lines." in notes
     assert "older entry" not in notes
+    assert notes.rstrip().endswith(
+        "**Full Changelog**: https://github.com/BnS2/appfit/compare/v1.2.2...v1.2.3"
+    )
+
+
+def test_release_notes_list_commits_when_there_is_no_earlier_release(tmp_path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text("# Changelog\n\n## 1.0.0 - 2026-01-01\n\n- First.\n")
+
+    notes = release_notes.compose("v1.0.0", changelog)
+
+    assert notes.rstrip().endswith(
+        "**Full Changelog**: https://github.com/BnS2/appfit/commits/v1.0.0"
+    )
 
 
 def test_release_notes_refuse_a_version_the_changelog_does_not_describe(tmp_path):

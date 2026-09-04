@@ -1,10 +1,11 @@
-"""Compose GitHub Release notes from the changelog and the published assets.
+"""Compose GitHub Release notes from the changelog entry for a tag.
 
-Generated notes are a list of commit subjects, which tells a reader what was
-touched but not what to download or why they would want it. The changelog
-already answers the second question, and the release page is where the first
-one is asked, so the notes lead with the assets and then quote the changelog
-entry verbatim.
+Generated notes are a list of commit subjects, which says what was touched but
+not what changed for anyone using the thing. The changelog already answers that,
+so the release body is its entry for this version, reflowed: the changelog wraps
+its bullets to fit a text file, while a release page wraps them itself and hard
+breaks read as ragged. A `Full Changelog` link closes it, matching the releases
+that came before.
 
     python scripts/release_notes.py v0.3.1
 """
@@ -15,42 +16,59 @@ import re
 import sys
 from pathlib import Path
 
-INSTALL = """## Install
-
-**Mac app** — download `appfit-{version}-arm64.dmg` (Apple silicon) or
-`appfit-{version}-x86_64.dmg` (Intel), open it, and drag **appfit** to
-**Applications**. Nothing else is required; the App Store helper is inside the
-app. The app is not notarized, so the first launch needs right-click → **Open**.
-
-**Terminal** — install `appfit-{version}-py3-none-any.whl` into a Python 3.10+
-environment, then run `appfit ipatool install` (needs Go).
-
-See the [README](https://github.com/BnS2/appfit/blob/{tag}/README.md) for both
-paths in full.
-"""
+REPOSITORY = "https://github.com/BnS2/appfit"
+HEADING = re.compile(r"^## (\d+\.\d+\.\d+) - \d{4}-\d{2}-\d{2}$", flags=re.MULTILINE)
 
 
-def changelog_section(version: str, changelog: Path = Path("CHANGELOG.md")) -> str:
-    """The body of `## <version> - <date>`, up to the next release heading."""
-    text = changelog.read_text()
-    heading = re.compile(
-        rf"^## {re.escape(version)} - \d{{4}}-\d{{2}}-\d{{2}}$", flags=re.MULTILINE
-    )
-    match = heading.search(text)
-    if match is None:
-        raise SystemExit(f"CHANGELOG.md has no dated {version} release heading")
+def versions(text: str) -> list[str]:
+    """Released versions, newest first, as the changelog orders them."""
+    return HEADING.findall(text)
 
-    rest = text[match.end() :]
-    following = re.search(r"^## ", rest, flags=re.MULTILINE)
-    return rest[: following.start()].strip() if following else rest.strip()
+
+def section(version: str, text: str) -> str:
+    """The body under `## <version> - <date>`, up to the next release heading."""
+    for match in HEADING.finditer(text):
+        if match.group(1) != version:
+            continue
+        rest = text[match.end() :]
+        following = re.search(r"^## ", rest, flags=re.MULTILINE)
+        return (rest[: following.start()] if following else rest).strip()
+    raise SystemExit(f"CHANGELOG.md has no dated {version} release heading")
+
+
+def unwrap(body: str) -> str:
+    """Join each bullet onto one line, leaving headings and blanks alone.
+
+    The changelog is wrapped for reading in a text editor. A release page adds
+    its own wrapping, so those hard breaks survive as mid-sentence ragged edges.
+    """
+    lines: list[str] = []
+    for line in body.splitlines():
+        continuation = line.startswith("  ") and lines and lines[-1].startswith("-")
+        if continuation:
+            lines[-1] = f"{lines[-1]} {line.strip()}"
+        else:
+            lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
+def changelog_link(version: str, all_versions: list[str]) -> str:
+    """Compare against the previous release, or list commits for the first."""
+    tag = f"v{version}"
+    position = all_versions.index(version)
+    if position + 1 < len(all_versions):
+        previous = f"v{all_versions[position + 1]}"
+        return f"**Full Changelog**: {REPOSITORY}/compare/{previous}...{tag}"
+    return f"**Full Changelog**: {REPOSITORY}/commits/{tag}"
 
 
 def compose(tag: str, changelog: Path = Path("CHANGELOG.md")) -> str:
     version = tag[1:] if tag.startswith("v") else tag
+    text = changelog.read_text()
     return (
-        INSTALL.format(version=version, tag=tag)
-        + "\n## Changes\n\n"
-        + changelog_section(version, changelog)
+        unwrap(section(version, text))
+        + "\n\n"
+        + changelog_link(version, versions(text))
         + "\n"
     )
 
