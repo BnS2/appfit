@@ -88,15 +88,14 @@ source .venv/bin/activate
 
    ![The recommended build, with install, download, and licence actions](assets/screenshots/recommendation.png)
 
-Older compatible builds can be loaded after the recommendation. Password and
-two-factor prompts open in a separate Terminal window; appfit does not receive
-or store those secrets.
+Older compatible builds can be loaded after the recommendation. Apple ID
+password entry and verification during initial sign-in stay in a separate
+Terminal window and go directly to ipatool.
 
 Apple sometimes asks for a fresh verification code before it adds an app to
-your purchases. appfit then stops instead of retrying, since each retry sends
-another "Allow" prompt to your devices, and offers to finish the claim in
-Terminal. Tap **Allow** once, type the six-digit code into Terminal, then
-repeat the step in appfit. The terminal commands ask for the code in place.
+your purchases. The Mac app asks for that six-digit code in its own window,
+forwards it to ipatool over standard input, and resumes the interrupted action.
+It never stores or logs the code. Terminal commands ask for the code in place.
 
 ## Use the terminal with a cable
 

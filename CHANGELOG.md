@@ -12,15 +12,16 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Claiming a licence no longer ends at `auth code is required` when Apple wants
   a fresh two-factor sign-in. ipatool's automatic re-login could not ask for
   the code, so every retry sent another "Allow" prompt to the account's
-  devices. appfit now stops at the first request: the Mac app offers to finish
-  the claim in Terminal, where the helper asks for the code, and the terminal
-  commands ask for it in place. The code still never passes through appfit.
+  devices. The Mac app now collects the six-digit code in its own window,
+  forwards it to ipatool over standard input, and resumes the interrupted
+  action automatically. Terminal commands continue to ask for the code in
+  place. appfit never stores or logs the code.
 - A licence is claimed once per session rather than again before each
   download.
 
 ### Changed
 
-- The bundled ipatool patch is now revision 2. `appfit ipatool install`
+- The bundled ipatool patch is now revision 3. `appfit ipatool install`
   rebuilds helpers built from the earlier patch.
 
 ## 0.3.2 - 2026-10-30

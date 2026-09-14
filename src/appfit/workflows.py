@@ -47,15 +47,24 @@ class WorkflowError(RuntimeError):
 
 
 class VerificationRequired(WorkflowError):
-    """The licence claim needs a two-factor code typed into a terminal.
+    """The licence claim needs a two-factor code before it can continue.
 
-    Carries the app so a presentation layer can open that terminal claim
-    instead of showing a dead end.
+    Carries the app and account so the GUI can collect the short-lived code,
+    finish the claim, and resume the interrupted operation.
     """
 
-    def __init__(self, app: App, message: str) -> None:
+    def __init__(
+        self,
+        app: App,
+        account: str,
+        message: str,
+        *,
+        rejected: bool = False,
+    ) -> None:
         super().__init__(message)
         self.app = app
+        self.account = account
+        self.rejected = rejected
 
 
 @dataclass(frozen=True)
@@ -205,8 +214,35 @@ class BuildWorkflow:
         try:
             claimed = self.client.purchase(app.bundle_id)
         except AuthCodeRequired as exc:
-            raise VerificationRequired(app, str(exc)) from exc
+            raise VerificationRequired(app, account, str(exc)) from exc
         self._licensed.add(licence)
+        return claimed
+
+    def verify_claim(self, app: App, account: str, auth_code: str) -> bool:
+        """Finish a claim with a short-lived code and remember its licence.
+
+        The code is passed straight to the store helper and cleared from this
+        frame before any success or failure crosses the workflow boundary.
+        """
+        try:
+            self.client.require_account(account)
+            try:
+                claimed = self.client.purchase_with_auth_code(
+                    app.bundle_id, auth_code
+                )
+            finally:
+                auth_code = ""
+        except AuthCodeRequired as exc:
+            raise VerificationRequired(
+                app,
+                account,
+                "That verification code was not accepted.\n"
+                "Enter the newest six-digit code shown by Apple.",
+                rejected=True,
+            ) from exc
+        except (IpatoolMissing, StoreError) as exc:
+            raise WorkflowError(str(exc)) from exc
+        self._licensed.add((account.casefold(), app.bundle_id))
         return claimed
 
     def active_account(self):
@@ -542,28 +578,6 @@ def launch_login_terminal(email: str) -> Path:
         intro=None,
         success="Sign-in complete. You can return to appfit.",
         failure="Sign-in failed. Review the message above.",
-    )
-
-
-def launch_claim_terminal(app: App) -> Path:
-    """Run a licence claim in Terminal so ipatool can ask for the 2FA code.
-
-    The code goes straight to ipatool's prompt, as the password does at sign-in;
-    appfit never sees it. A successful claim also saves the refreshed session,
-    so the step that asked for the code works when it is repeated.
-    """
-    if not _BUNDLE_ID.fullmatch(app.bundle_id):
-        raise WorkflowError(f"Unexpected bundle identifier: {app.bundle_id!r}")
-    name = app.name or app.bundle_id
-    return _launch_helper_terminal(
-        "claim.command",
-        ["purchase", "-b", app.bundle_id],
-        intro=(
-            f"Claiming {name}. If Apple asks for a verification code, tap Allow "
-            "on your device and type the six-digit code here."
-        ),
-        success=f"{name} licence claimed. Return to appfit and repeat the last step.",
-        failure="The claim did not finish. Review the message above.",
     )
 
 

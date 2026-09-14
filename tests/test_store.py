@@ -192,3 +192,39 @@ def test_interactive_purchase_leaves_the_terminal_to_ipatool(monkeypatch):
     assert argv == ["/usr/bin/ipatool", "purchase", "-b", "com.example.app"]
     assert "--non-interactive" not in argv
     assert "capture_output" not in kwargs
+
+
+def test_gui_purchase_sends_the_code_only_over_stdin(monkeypatch):
+    observed = {}
+
+    def fake_run(args, timeout, stdin_text):
+        observed.update(args=args, timeout=timeout, stdin_text=stdin_text)
+        return {"alreadyOwned": False}
+
+    monkeypatch.setattr(store, "_run", fake_run)
+
+    claimed = store.StoreClient().purchase_with_auth_code(
+        "com.example.app", "123456"
+    )
+
+    assert claimed is True
+    assert observed["args"] == [
+        "purchase",
+        "-b",
+        "com.example.app",
+        "--auth-code-stdin",
+    ]
+    assert "123456" not in observed["args"]
+    assert observed["stdin_text"] == "123456\n"
+
+
+@pytest.mark.parametrize("code", ["", "12345", "1234567", "12 345", "abcdef"])
+def test_gui_purchase_rejects_malformed_codes_before_ipatool(code, monkeypatch):
+    monkeypatch.setattr(
+        store,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("malformed code reached ipatool"),
+    )
+
+    with pytest.raises(store.StoreError, match="six-digit"):
+        store.StoreClient().purchase_with_auth_code("com.example.app", code)

@@ -57,16 +57,16 @@ class AuthCodeRequired(StoreError):
     saved session still reads build history. ipatool then signs in again on its
     own with the stored password, which sends an "Allow" prompt to every
     trusted device -- but in --non-interactive mode it cannot ask for the code
-    that prompt shows, so each retry only sends another prompt. Callers must
-    stop here and hand the claim to a terminal, never retry it silently.
+    that prompt shows. Callers must stop here and request the code explicitly,
+    never retry the same unauthenticated claim silently.
     """
 
     def __init__(self) -> None:
         super().__init__(
             "Apple needs a verification code before it will add this app.\n"
             "Apple sent a sign-in request to your trusted devices. Tap Allow "
-            "once, then enter the six-digit code it shows when the claim prompt "
-            "asks for it. Retrying without the code only sends another request."
+            "once, then enter the six-digit code when appfit asks for it. "
+            "Retrying without the code only sends another request."
         )
 
 
@@ -170,6 +170,7 @@ def _run(
     timeout: int = 900,
     watch: Path | None = None,
     on_progress: Callable[[int], None] | None = None,
+    stdin_text: str | None = None,
 ) -> dict:
     """Run ipatool with JSON output and return the parsed result."""
     binary, _source = selected_ipatool()
@@ -178,9 +179,21 @@ def _run(
 
     argv = [str(binary), *args, "--format", "json", "--non-interactive"]
     if watch is not None and on_progress is not None:
+        if stdin_text is not None:
+            raise ValueError("watched ipatool commands cannot receive stdin")
         stdout, stderr, returncode = _run_watched(argv, watch, on_progress, timeout)
     else:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        try:
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                input=stdin_text,
+            )
+        finally:
+            # A verification code must not survive in a traceback frame.
+            stdin_text = None
         stdout, stderr, returncode = proc.stdout, proc.stderr, proc.returncode
 
     # ipatool emits one JSON object per line; the last is the result.
@@ -254,6 +267,29 @@ class StoreClient:
     def purchase(self, bundle_id: str) -> bool:
         """Claim a free licence. True if newly claimed, False if already owned."""
         data = _run(["purchase", "-b", bundle_id], timeout=180)
+        return not bool(data.get("alreadyOwned"))
+
+    def purchase_with_auth_code(self, bundle_id: str, auth_code: str) -> bool:
+        """Retry a licence claim with a six-digit code delivered over stdin.
+
+        The code is deliberately absent from argv and the environment, and the
+        local reference is cleared before an error can leave this frame.
+        """
+        auth_code = auth_code.strip()
+        if not (
+            len(auth_code) == 6
+            and auth_code.isascii()
+            and auth_code.isdigit()
+        ):
+            raise StoreError("Enter the six-digit verification code from Apple.")
+        try:
+            data = _run(
+                ["purchase", "-b", bundle_id, "--auth-code-stdin"],
+                timeout=180,
+                stdin_text=f"{auth_code}\n",
+            )
+        finally:
+            auth_code = ""
         return not bool(data.get("alreadyOwned"))
 
     # -------------------------------------------------------------- builds

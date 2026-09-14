@@ -30,8 +30,8 @@ IPATOOL_ENV = "APPFIT_IPATOOL"
 PATCH_NAME = "ipatool-compatibility-metadata.patch"
 # Bump whenever the patch changes, so a helper built from an older patch is
 # rebuilt by `appfit ipatool install` instead of trusted as current.
-# 2: `purchase` prompts for the 2FA code its automatic re-login needs.
-PATCH_REVISION = 2
+# 3: GUI claims can supply the 2FA code over stdin; CLI claims still prompt.
+PATCH_REVISION = 3
 
 
 class ToolchainError(RuntimeError):
