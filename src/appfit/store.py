@@ -50,6 +50,26 @@ class WrongAccount(StoreError):
     """The signed-in Apple ID is not the one this device is paired to."""
 
 
+class AuthCodeRequired(StoreError):
+    """Apple wants a fresh two-factor sign-in before it will grant a licence.
+
+    A purchase can be refused with a "sign in again" failure even while the
+    saved session still reads build history. ipatool then signs in again on its
+    own with the stored password, which sends an "Allow" prompt to every
+    trusted device -- but in --non-interactive mode it cannot ask for the code
+    that prompt shows, so each retry only sends another prompt. Callers must
+    stop here and hand the claim to a terminal, never retry it silently.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Apple needs a verification code before it will add this app.\n"
+            "Apple sent a sign-in request to your trusted devices. Tap Allow "
+            "once, then enter the six-digit code it shows when the claim prompt "
+            "asks for it. Retrying without the code only sends another request."
+        )
+
+
 class BuildNotServed(StoreError):
     """The store answered normally but handed back no package.
 
@@ -65,6 +85,9 @@ class BuildNotServed(StoreError):
 # ipatool's wording for an empty song list, across list-versions,
 # get-version-metadata, and download alike.
 _EMPTY_RESPONSE = "invalid response"
+
+# ipatool's wording when Apple asks its automatic re-login for a 2FA code.
+_AUTH_CODE_REQUIRED = "auth code is required"
 
 
 @dataclass
@@ -176,8 +199,11 @@ def _run(
             or (stderr or "").strip()
             or f"ipatool {' '.join(args)} failed (exit {returncode})"
         )
-        if str(message).strip().lower() == _EMPTY_RESPONSE:
+        normalized = str(message).strip().lower()
+        if normalized == _EMPTY_RESPONSE:
             raise BuildNotServed(message)
+        if normalized == _AUTH_CODE_REQUIRED:
+            raise AuthCodeRequired()
         raise StoreError(message)
     return payload
 
@@ -351,3 +377,16 @@ def login_interactively(email: str) -> int:
     if binary is None:
         raise IpatoolMissing()
     return subprocess.run([str(binary), "auth", "login", "-e", email]).returncode
+
+
+def purchase_interactively(bundle_id: str) -> int:
+    """Claim a licence with the terminal attached so ipatool can ask for 2FA.
+
+    appfit's patched helper prompts for the code when the claim's automatic
+    re-login needs one, then saves the refreshed session. Not captured, for the
+    same reason as `login_interactively`.
+    """
+    binary, _source = selected_ipatool()
+    if binary is None:
+        raise IpatoolMissing()
+    return subprocess.run([str(binary), "purchase", "-b", bundle_id]).returncode

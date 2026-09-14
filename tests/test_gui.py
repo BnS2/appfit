@@ -22,7 +22,7 @@ from appfit.gui.window import (
     SpaciousComboBox,
 )
 from appfit.store import Account
-from appfit.workflows import BuildCandidate, ResolutionReport
+from appfit.workflows import BuildCandidate, ResolutionReport, VerificationRequired
 
 
 APP = App(1, "com.example.app", "Example", "4.0", "18.0", "Example Co")
@@ -418,4 +418,41 @@ def test_long_store_explanation_keeps_the_summary_line_readable(
     assert shown["text"] == "the App Store served no build for com.example.app."
     assert "Retry in a few days." in shown["detail"]
     assert "empty package list" in window.activity.toPlainText()
+    window.close()
+
+
+def test_claim_needing_a_code_offers_terminal_instead_of_an_error(
+    application, monkeypatch
+):
+    """The bare error left people approving prompts with nowhere to type the code."""
+    window = make_window(application, monkeypatch)
+    launched = []
+    monkeypatch.setattr(window, "_confirm_claim_in_terminal", lambda _error: True)
+    monkeypatch.setattr(
+        "appfit.gui.window.launch_claim_terminal", lambda app: launched.append(app)
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        window,
+        "_show_error",
+        lambda message: pytest.fail(f"dead-end error shown: {message}"),
+    )
+
+    window._task_failed(
+        VerificationRequired(APP, "Apple needs a verification code.\nTap Allow once.")
+    )
+
+    assert launched == [APP]
+    assert "Verification code needed" in window.activity_summary.text()
+    window.close()
+
+
+def test_other_task_failures_still_show_the_error(application, monkeypatch):
+    window = make_window(application, monkeypatch)
+    shown = []
+    monkeypatch.setattr(window, "_show_error", shown.append)
+
+    window._task_failed(RuntimeError("store unavailable"))
+
+    assert shown == ["store unavailable"]
     window.close()

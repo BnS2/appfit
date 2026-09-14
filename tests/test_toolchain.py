@@ -75,6 +75,7 @@ def test_install_managed_ipatool_pins_source_and_writes_manifest(tmp_path, monke
     assert manifest["release"] == toolchain.IPATOOL_RELEASE
     assert manifest["revision"] == toolchain.IPATOOL_REVISION
     assert manifest["compatibility_metadata"] is True
+    assert manifest["patch_revision"] == toolchain.PATCH_REVISION
     clone = calls[0][0]
     assert clone[clone.index("--branch") + 1] == toolchain.IPATOOL_RELEASE
     build = next(argv for argv, _cwd in calls if argv[:2] == ["go", "build"])
@@ -83,6 +84,44 @@ def test_install_managed_ipatool_pins_source_and_writes_manifest(tmp_path, monke
     assert apply_calls
     assert all("--unidiff-zero" in argv for argv in apply_calls)
     assert steps[-1] == "installing appfit-managed helper"
+
+
+def test_install_rebuilds_a_helper_built_from_an_older_patch(tmp_path, monkeypatch):
+    monkeypatch.setattr(toolchain.accounts, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        toolchain, "bundled_ipatool_path", lambda: tmp_path / "missing-bundled"
+    )
+    binary = _executable(toolchain.managed_ipatool_path(), b"old")
+    binary.with_name("manifest.json").write_text(
+        json.dumps(
+            {"revision": toolchain.IPATOOL_REVISION, "compatibility_metadata": True}
+        )
+    )
+    monkeypatch.setattr(toolchain, "_version", lambda _binary: "old")
+    monkeypatch.setattr(toolchain.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(argv, *, cwd=None, timeout=1800):
+        if argv[:2] == ["git", "clone"]:
+            Path(argv[-1]).mkdir(parents=True)
+        elif argv[-2:] == ["rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=f"{toolchain.IPATOOL_REVISION}\n", stderr=""
+            )
+        elif argv[0] == "go" and argv[1] == "build":
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"optimized")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(toolchain, "_run", fake_run)
+
+    assert toolchain.install_managed_ipatool().read_bytes() == b"optimized"
+
+
+def test_bundled_patch_lets_purchase_ask_for_the_code():
+    with toolchain._patch_file() as patch:
+        text = patch.read_text()
+
+    assert "+++ b/cmd/purchase.go" in text
+    assert "appstore.ErrAuthCodeRequired) && interactive" in text
 
 
 def test_install_rejects_moved_release_tag(tmp_path, monkeypatch):

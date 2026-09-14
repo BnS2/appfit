@@ -52,7 +52,9 @@ from ..workflows import (
     PreparedIPA,
     ProgressEvent,
     ResolutionReport,
+    VerificationRequired,
     WorkflowError,
+    launch_claim_terminal,
     launch_login_terminal,
     target_from_manual,
 )
@@ -516,7 +518,7 @@ class TaskThread(QThread):
 
     progress = Signal(object)
     succeeded = Signal(object)
-    failed = Signal(str)
+    failed = Signal(object)
 
     def __init__(self, task: Task, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -526,7 +528,7 @@ class TaskThread(QThread):
         try:
             result = self.task(self.progress.emit)
         except Exception as exc:  # normalized at the GUI boundary
-            self.failed.emit(str(exc) or type(exc).__name__)
+            self.failed.emit(exc)
         else:
             self.succeeded.emit(result)
 
@@ -988,7 +990,7 @@ class AppfitWindow(QMainWindow):
         self.activity.appendPlainText(description)
         thread.progress.connect(self._show_progress)
         thread.succeeded.connect(on_success)
-        thread.failed.connect(self._show_error)
+        thread.failed.connect(self._task_failed)
 
         def finished() -> None:
             self._threads.discard(thread)
@@ -1019,6 +1021,52 @@ class AppfitWindow(QMainWindow):
         if event.total is not None and event.current is not None and event.total > 0:
             self.progress_bar.setRange(0, event.total)
             self.progress_bar.setValue(min(event.current, event.total))
+
+    def _task_failed(self, error: object) -> None:
+        if isinstance(error, VerificationRequired):
+            self._handle_verification(error)
+            return
+        self._show_error(str(error) or type(error).__name__)
+
+    def _handle_verification(self, error: VerificationRequired) -> None:
+        """Send a claim that needs a 2FA code to Terminal instead of dead-ending.
+
+        The bare error left people approving Apple's "Allow" prompts with
+        nowhere to type the code, while every retry sent another sign-in.
+        """
+        name = error.app.name or error.app.bundle_id
+        self.activity_summary.setText(f"Verification code needed to claim {name}")
+        self.activity.appendPlainText(f"Verification needed: {error}")
+        if not self._confirm_claim_in_terminal(error):
+            return
+        try:
+            launch_claim_terminal(error.app)
+        except WorkflowError as exc:
+            self._show_error(str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Finish the claim in Terminal",
+            "Type the verification code in the Terminal window. appfit does not "
+            "capture it. When Terminal reports the licence claimed, return here "
+            "and repeat the last step.",
+        )
+
+    def _confirm_claim_in_terminal(self, error: VerificationRequired) -> bool:
+        headline, _, detail = str(error).partition("\n")
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Verification code needed")
+        dialog.setText(headline)
+        if detail.strip():
+            dialog.setInformativeText(detail.strip())
+        open_button = dialog.addButton(
+            "Open Terminal", QMessageBox.ButtonRole.AcceptRole
+        )
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(open_button)
+        dialog.exec()
+        return dialog.clickedButton() == open_button
 
     def _show_error(self, message: str) -> None:
         """Show a failure without letting a long explanation eat the window.

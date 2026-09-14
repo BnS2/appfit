@@ -10,8 +10,14 @@ from appfit import accounts, cache, workflows
 from appfit.apps import App
 from appfit.devices import Target
 from appfit.probe import BuildInfo
-from appfit.store import Account, BuildNotServed, WrongAccount
-from appfit.workflows import BuildWorkflow, WorkflowError, target_from_manual
+from appfit.store import Account, AuthCodeRequired, BuildNotServed, WrongAccount
+from appfit.workflows import (
+    BuildCandidate,
+    BuildWorkflow,
+    VerificationRequired,
+    WorkflowError,
+    target_from_manual,
+)
 
 
 APP = App(
@@ -316,3 +322,88 @@ def test_a_build_the_store_refuses_is_never_recommended():
 
     assert refused.runs_on("18.0") is False
     assert refused.fits(Target.from_ios("18.0", "ipad")) is False
+
+
+def test_claim_stops_at_the_first_verification_request(tmp_path):
+    """Each further store call after Apple asks for a code sends another prompt."""
+    client = FakeClient()
+    attempts = []
+
+    def demand_code(bundle_id):
+        attempts.append(bundle_id)
+        raise AuthCodeRequired()
+
+    client.purchase = demand_code
+    client.version_ids = lambda bundle_id: pytest.fail(
+        "must not keep calling the store after Apple asks for a code"
+    )
+
+    with pytest.raises(VerificationRequired) as failure:
+        BuildWorkflow(client, tmp_path / "ipa").resolve(
+            APP,
+            Target.from_ios("16.7.16", "ipad"),
+            "owner@example.com",
+            claim_licence=True,
+        )
+
+    assert failure.value.app == APP
+    assert attempts == [APP.bundle_id]
+
+
+def test_download_does_not_claim_the_same_licence_twice(tmp_path):
+    client = FakeClient()
+    claims = []
+    original = client.purchase
+    client.purchase = lambda bundle_id: claims.append(bundle_id) or original(bundle_id)
+    workflow = BuildWorkflow(client, tmp_path / "ipa")
+    target = Target.from_ios("16.7.16", "ipad")
+    candidate = BuildCandidate(
+        history_index=1,
+        external_version_id="101",
+        display_version="2.0",
+        release_date="2021-01-01",
+        minimum_os="16.0",
+        device_families=(1, 2),
+        compatible=True,
+        source="metadata",
+    )
+
+    assert workflow.claim(APP, "owner@example.com") is True
+    workflow.prepare(APP, target, "owner@example.com", candidate)
+
+    assert claims == [APP.bundle_id]
+
+
+def test_claim_cache_is_scoped_to_the_apple_id(tmp_path):
+    client = FakeClient()
+    claims = []
+    client.require_account = lambda email: client.account
+    client.purchase = lambda bundle_id: claims.append(bundle_id) or True
+    workflow = BuildWorkflow(client, tmp_path / "ipa")
+
+    assert workflow.claim(APP, "first@example.com") is True
+    assert workflow.claim(APP, "second@example.com") is True
+
+    assert claims == [APP.bundle_id, APP.bundle_id]
+
+
+def test_claim_terminal_leaves_the_code_to_ipatool(tmp_path, monkeypatch):
+    binary = tmp_path / "ipatool"
+    binary.write_bytes(b"helper")
+    binary.chmod(0o755)
+    calls = []
+    monkeypatch.setattr(workflows, "selected_ipatool", lambda: (binary, "test"))
+    monkeypatch.setattr(
+        workflows.subprocess,
+        "Popen",
+        lambda argv, **kwargs: calls.append(argv),
+    )
+
+    script = workflows.launch_claim_terminal(APP)
+
+    contents = script.read_text()
+    assert f"purchase -b {APP.bundle_id}" in contents
+    assert "--non-interactive" not in contents
+    assert "--auth-code" not in contents
+    assert "--password" not in contents
+    assert calls[0][:3] == ["open", "-a", "Terminal"]
