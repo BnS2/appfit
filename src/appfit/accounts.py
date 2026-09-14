@@ -5,9 +5,9 @@ The licence for an app has to be claimed on the Apple ID signed into the
 to your purchase history for every future update, so appfit never picks an
 account implicitly: a device is paired to one, or the caller names one.
 
-Credentials themselves are ipatool's business (see store.py). Nothing secret is
-written here -- only which email belongs with which device, so the tool can
-refuse to act when the wrong account is signed in.
+Apple ID passwords and sessions are ipatool's business (see store.py). Nothing
+secret is written here -- only which email belongs with which device, so the
+tool can refuse to act when the wrong account is signed in.
 """
 
 from __future__ import annotations

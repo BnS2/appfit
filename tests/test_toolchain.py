@@ -116,12 +116,14 @@ def test_install_rebuilds_a_helper_built_from_an_older_patch(tmp_path, monkeypat
     assert toolchain.install_managed_ipatool().read_bytes() == b"optimized"
 
 
-def test_bundled_patch_lets_purchase_ask_for_the_code():
+def test_bundled_patch_supports_cli_prompt_and_gui_stdin():
     with toolchain._patch_file() as patch:
         text = patch.read_text()
 
     assert "+++ b/cmd/purchase.go" in text
     assert "appstore.ErrAuthCodeRequired) && interactive" in text
+    assert '"auth-code-stdin"' in text
+    assert "AuthCode: authCode" in text
 
 
 def test_install_rejects_moved_release_tag(tmp_path, monkeypatch):

@@ -347,6 +347,8 @@ def test_claim_stops_at_the_first_verification_request(tmp_path):
         )
 
     assert failure.value.app == APP
+    assert failure.value.account == "owner@example.com"
+    assert failure.value.rejected is False
     assert attempts == [APP.bundle_id]
 
 
@@ -387,23 +389,36 @@ def test_claim_cache_is_scoped_to_the_apple_id(tmp_path):
     assert claims == [APP.bundle_id, APP.bundle_id]
 
 
-def test_claim_terminal_leaves_the_code_to_ipatool(tmp_path, monkeypatch):
-    binary = tmp_path / "ipatool"
-    binary.write_bytes(b"helper")
-    binary.chmod(0o755)
-    calls = []
-    monkeypatch.setattr(workflows, "selected_ipatool", lambda: (binary, "test"))
-    monkeypatch.setattr(
-        workflows.subprocess,
-        "Popen",
-        lambda argv, **kwargs: calls.append(argv),
+def test_verification_claim_forwards_the_code_and_resumes_as_licensed(tmp_path):
+    client = FakeClient()
+    supplied = []
+    client.purchase_with_auth_code = (
+        lambda bundle_id, code: supplied.append((bundle_id, code)) or True
     )
+    client.purchase = lambda bundle_id: pytest.fail(
+        "verified licence must not be claimed a second time"
+    )
+    workflow = BuildWorkflow(client, tmp_path / "ipa")
 
-    script = workflows.launch_claim_terminal(APP)
+    assert workflow.verify_claim(APP, "owner@example.com", "123456") is True
+    assert workflow.claim(APP, "owner@example.com") is False
 
-    contents = script.read_text()
-    assert f"purchase -b {APP.bundle_id}" in contents
-    assert "--non-interactive" not in contents
-    assert "--auth-code" not in contents
-    assert "--password" not in contents
-    assert calls[0][:3] == ["open", "-a", "Terminal"]
+    assert supplied == [(APP.bundle_id, "123456")]
+
+
+def test_rejected_verification_code_requests_a_new_code(tmp_path):
+    client = FakeClient()
+
+    def reject(bundle_id, code):
+        raise AuthCodeRequired()
+
+    client.purchase_with_auth_code = reject
+    workflow = BuildWorkflow(client, tmp_path / "ipa")
+
+    with pytest.raises(VerificationRequired) as failure:
+        workflow.verify_claim(APP, "owner@example.com", "123456")
+
+    assert failure.value.app == APP
+    assert failure.value.account == "owner@example.com"
+    assert failure.value.rejected is True
+    assert "not accepted" in str(failure.value)
