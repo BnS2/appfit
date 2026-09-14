@@ -20,6 +20,14 @@ QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/test_gui.py tests/test_workflow
 .venv/bin/appfit-gui
 ```
 
+To inspect the complete Apple verification-code flow without contacting Apple,
+run its local preview. The first mock code is deliberately rejected so both
+dialog states can be checked; the second completes the preview.
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/preview_verification.py
+```
+
 The public iTunes lookup tests are opt-in because they depend on an external
 service:
 
