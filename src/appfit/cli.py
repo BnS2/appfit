@@ -24,11 +24,13 @@ from .resolve import (
 )
 from .workflows import refusal_message
 from .store import (
+    AuthCodeRequired,
     BuildNotServed,
     IpatoolMissing,
     StoreClient,
     StoreError,
     login_interactively,
+    purchase_interactively,
 )
 
 app = typer.Typer(
@@ -268,6 +270,27 @@ def _client_for(email: str | None) -> tuple[StoreClient, str]:
     return client, email
 
 
+def _claim(client: StoreClient, store_app: App) -> None:
+    """Claim the licence, asking for a 2FA code here only when Apple insists.
+
+    A silent retry cannot supply the code and would only send another "Allow"
+    prompt to the account's devices, so the claim is repeated once with this
+    terminal attached for ipatool's own code prompt.
+    """
+    try:
+        claimed = client.purchase(store_app.bundle_id)
+    except AuthCodeRequired as exc:
+        headline, _, detail = str(exc).partition("\n")
+        typer.echo(f"  {headline}\n  {detail}")
+        if purchase_interactively(store_app.bundle_id) != 0:
+            _err("could not claim licence: verification did not complete")
+        _ok("licence claimed after verification")
+        return
+    except StoreError as exc:
+        _err(f"could not claim licence: {exc}")
+    _ok("licence claimed" if claimed else "licence already held by this account")
+
+
 def _confirm_claim(store_app: App, query: str, yes: bool) -> None:
     """Require confirmation before a fuzzy match changes purchase history."""
     if store_app.matched_exactly or yes:
@@ -426,10 +449,8 @@ def _prepare_ipa(
 
     client, email = _client_for(account)
     _ok(f"account {email}")
+    _claim(client, store_app)
     try:
-        claimed = client.purchase(store_app.bundle_id)
-        _ok("licence claimed" if claimed else "licence already held by this account")
-
         result = _do_resolve(client, store_app, target, yes)
         destination = ipa_dir() / (
             f"{store_app.bundle_id}-{result.external_version_id}.ipa"
@@ -519,11 +540,7 @@ def get_cmd(
     client, email = _client_for(account or paired)
     _ok(f"account {email}")
 
-    try:
-        claimed = client.purchase(store_app.bundle_id)
-    except StoreError as exc:
-        _err(f"could not claim licence: {exc}")
-    _ok("licence claimed" if claimed else "licence already held by this account")
+    _claim(client, store_app)
 
     if version_tuple(store_app.minimum_os) <= version_tuple(target.ios_version):
         _ok(

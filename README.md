@@ -85,6 +85,12 @@ Older compatible builds can be loaded after the recommendation. Password and
 two-factor prompts open in a separate Terminal window; appfit does not receive
 or store those secrets.
 
+Apple sometimes asks for a fresh verification code before it adds an app to
+your purchases. appfit then stops instead of retrying, since each retry sends
+another "Allow" prompt to your devices, and offers to finish the claim in
+Terminal. Tap **Allow** once, type the six-digit code into Terminal, then
+repeat the step in appfit. The terminal commands ask for the code in place.
+
 ## Use the terminal with a cable
 
 Sign in, connect and trust the device, then list it:

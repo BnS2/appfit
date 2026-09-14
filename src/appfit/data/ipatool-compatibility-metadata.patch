@@ -78,3 +78,43 @@ index d824c43..5f9b422 100644
 +		ReleaseDate:      releaseDate,
 +		MinimumOSVersion: minimumOSVersion,
 +		DeviceFamilies:   deviceFamilies,
+diff --git a/cmd/purchase.go b/cmd/purchase.go
+--- a/cmd/purchase.go
++++ b/cmd/purchase.go
+@@ -3,0 +4 @@ import (
++	"bufio"
+@@ -4,0 +6,3 @@ import (
++	"fmt"
++	"os"
++	"strings"
+@@ -19,0 +24,2 @@ func purchaseCmd() *cobra.Command {
++			interactive, _ := cmd.Context().Value(interactiveKey).(bool)
++
+@@ -35,0 +42,17 @@ func purchaseCmd() *cobra.Command {
++					// A purchase can demand a fresh two-factor sign-in. Without a prompt
++					// here the re-login sends an "Allow" request to the account's
++					// devices and then fails, so every retry only sends another one.
++					if errors.Is(err, appstore.ErrAuthCodeRequired) && interactive {
++						dependencies.Logger.Log().Msg("enter 2FA code:")
++
++						authCode, readErr := readPurchaseAuthCode()
++						if readErr != nil {
++							return readErr
++						}
++
++						loginResult, err = dependencies.AppStore.Login(appstore.LoginInput{
++							Email:    acc.Email,
++							Password: acc.Password,
++							AuthCode: authCode,
++						})
++					}
+@@ -77,0 +101,9 @@ func purchaseCmd() *cobra.Command {
++
++func readPurchaseAuthCode() (string, error) {
++	authCode, err := bufio.NewReader(os.Stdin).ReadString('\n')
++	if err != nil {
++		return "", fmt.Errorf("failed to read auth code: %w", err)
++	}
++
++	return strings.TrimSpace(authCode), nil
++}

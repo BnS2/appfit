@@ -5,6 +5,24 @@ All notable changes to appfit are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- Claiming a licence no longer ends at `auth code is required` when Apple wants
+  a fresh two-factor sign-in. ipatool's automatic re-login could not ask for
+  the code, so every retry sent another "Allow" prompt to the account's
+  devices. appfit now stops at the first request: the Mac app offers to finish
+  the claim in Terminal, where the helper asks for the code, and the terminal
+  commands ask for it in place. The code still never passes through appfit.
+- A licence is claimed once per session rather than again before each
+  download.
+
+### Changed
+
+- The bundled ipatool patch is now revision 2. `appfit ipatool install`
+  rebuilds helpers built from the earlier patch.
+
 ## 0.3.1 - 2026-09-04
 
 ### Added

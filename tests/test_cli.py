@@ -5,6 +5,32 @@ import os
 from appfit import cache, cli
 from appfit.apps import App
 from appfit.devices import Target
+from appfit.store import AuthCodeRequired
+
+
+def test_claim_asks_for_the_code_in_this_terminal_once(monkeypatch, capsys):
+    """A silent retry cannot supply the code and only sends another prompt."""
+
+    class Client:
+        calls = 0
+
+        def purchase(self, bundle_id):
+            self.calls += 1
+            raise AuthCodeRequired()
+
+    prompted = []
+    monkeypatch.setattr(
+        cli,
+        "purchase_interactively",
+        lambda bundle_id: prompted.append(bundle_id) or 0,
+    )
+    client = Client()
+
+    cli._claim(client, App(1, "com.example.app", "Example", "10.0", "17.0", "Example"))
+
+    assert client.calls == 1
+    assert prompted == ["com.example.app"]
+    assert "licence claimed after verification" in capsys.readouterr().out
 
 
 def test_cached_resolve_skips_store_history_call(tmp_path, monkeypatch):

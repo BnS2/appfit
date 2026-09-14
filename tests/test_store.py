@@ -147,3 +147,48 @@ def test_history_can_be_read_off_one_known_build(monkeypatch):
         "101",
         "102",
     ]
+
+
+def test_auth_code_demand_becomes_a_distinct_failure(monkeypatch):
+    """ipatool's silent re-login cannot ask for a code.
+
+    Treated as an ordinary error, every retry sent another "Allow" prompt to
+    the account's devices, so callers need to recognise it and stop.
+    """
+    monkeypatch.setattr(
+        store, "selected_ipatool", lambda: (Path("/usr/bin/true"), "test")
+    )
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            stdout='{"level":"error","error":"auth code is required","success":false}',
+            stderr="",
+            returncode=1,
+        ),
+    )
+
+    with pytest.raises(store.AuthCodeRequired) as failure:
+        store.StoreClient().purchase("com.example.app")
+
+    assert "six-digit code" in str(failure.value)
+
+
+def test_interactive_purchase_leaves_the_terminal_to_ipatool(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        store, "selected_ipatool", lambda: (Path("/usr/bin/ipatool"), "test")
+    )
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs))
+        or SimpleNamespace(returncode=0),
+    )
+
+    assert store.purchase_interactively("com.example.app") == 0
+
+    argv, kwargs = calls[0]
+    assert argv == ["/usr/bin/ipatool", "purchase", "-b", "com.example.app"]
+    assert "--non-interactive" not in argv
+    assert "capture_output" not in kwargs

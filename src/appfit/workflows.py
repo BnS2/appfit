@@ -28,7 +28,13 @@ from .resolve import (
     metadata_probe,
     newest_compatible,
 )
-from .store import BuildNotServed, IpatoolMissing, StoreClient, StoreError
+from .store import (
+    AuthCodeRequired,
+    BuildNotServed,
+    IpatoolMissing,
+    StoreClient,
+    StoreError,
+)
 from .toolchain import selected_ipatool
 
 IOS_VERSION = re.compile(r"^\d+(?:\.\d+){0,3}$")
@@ -38,6 +44,18 @@ _STORE_URL = re.compile(r"/id\d+")
 
 class WorkflowError(RuntimeError):
     """An actionable failure safe to present in either CLI or GUI."""
+
+
+class VerificationRequired(WorkflowError):
+    """The licence claim needs a two-factor code typed into a terminal.
+
+    Carries the app so a presentation layer can open that terminal claim
+    instead of showing a dead end.
+    """
+
+    def __init__(self, app: App, message: str) -> None:
+        super().__init__(message)
+        self.app = app
 
 
 @dataclass(frozen=True)
@@ -171,6 +189,25 @@ class BuildWorkflow:
     ) -> None:
         self.client = client or StoreClient()
         self.directory = Path(directory) if directory else ipa_dir()
+        self._licensed: set[tuple[str, str]] = set()
+
+    def _claim(self, app: App, account: str) -> bool:
+        """Claim a licence once per session, stopping at a verification request.
+
+        Every refused claim makes ipatool sign in again, and every sign-in sends
+        an "Allow" prompt to the account's devices. Claiming again before each
+        download, or retrying after Apple asked for a code, turned one missing
+        code into a stream of prompts.
+        """
+        licence = (account.casefold(), app.bundle_id)
+        if licence in self._licensed:
+            return False
+        try:
+            claimed = self.client.purchase(app.bundle_id)
+        except AuthCodeRequired as exc:
+            raise VerificationRequired(app, str(exc)) from exc
+        self._licensed.add(licence)
+        return claimed
 
     def active_account(self):
         return self.client.active_account()
@@ -205,7 +242,7 @@ class BuildWorkflow:
         report = on_progress or _ignore_progress
         try:
             self.client.require_account(account)
-            claimed = self.client.purchase(app.bundle_id) if claim_licence else False
+            claimed = self._claim(app, account) if claim_licence else False
             report(
                 ProgressEvent(
                     "licence",
@@ -414,7 +451,7 @@ class BuildWorkflow:
         report = on_progress or _ignore_progress
         try:
             self.client.require_account(account)
-            self.client.purchase(app.bundle_id)
+            self._claim(app, account)
         except (IpatoolMissing, StoreError) as exc:
             raise WorkflowError(str(exc)) from exc
 
@@ -489,7 +526,7 @@ class BuildWorkflow:
     def claim(self, app: App, account: str) -> bool:
         try:
             self.client.require_account(account)
-            return self.client.purchase(app.bundle_id)
+            return self._claim(app, account)
         except (IpatoolMissing, StoreError) as exc:
             raise WorkflowError(str(exc)) from exc
 
@@ -499,25 +536,65 @@ def launch_login_terminal(email: str) -> Path:
     email = email.strip()
     if not email or "\n" in email or "\r" in email:
         raise WorkflowError("Enter a valid Apple ID email address.")
+    return _launch_helper_terminal(
+        "sign-in.command",
+        ["auth", "login", "-e", email],
+        intro=None,
+        success="Sign-in complete. You can return to appfit.",
+        failure="Sign-in failed. Review the message above.",
+    )
+
+
+def launch_claim_terminal(app: App) -> Path:
+    """Run a licence claim in Terminal so ipatool can ask for the 2FA code.
+
+    The code goes straight to ipatool's prompt, as the password does at sign-in;
+    appfit never sees it. A successful claim also saves the refreshed session,
+    so the step that asked for the code works when it is repeated.
+    """
+    if not _BUNDLE_ID.fullmatch(app.bundle_id):
+        raise WorkflowError(f"Unexpected bundle identifier: {app.bundle_id!r}")
+    name = app.name or app.bundle_id
+    return _launch_helper_terminal(
+        "claim.command",
+        ["purchase", "-b", app.bundle_id],
+        intro=(
+            f"Claiming {name}. If Apple asks for a verification code, tap Allow "
+            "on your device and type the six-digit code here."
+        ),
+        success=f"{name} licence claimed. Return to appfit and repeat the last step.",
+        failure="The claim did not finish. Review the message above.",
+    )
+
+
+def _launch_helper_terminal(
+    filename: str,
+    args: list[str],
+    *,
+    intro: str | None,
+    success: str,
+    failure: str,
+) -> Path:
+    """Open one ipatool command in Terminal with its output uncaptured."""
     binary, _source = selected_ipatool()
     if binary is None:
         raise WorkflowError(str(IpatoolMissing()))
 
-    script = accounts.config_dir() / "sign-in.command"
-    command = " ".join(
-        [shlex.quote(str(binary)), "auth", "login", "-e", shlex.quote(email)]
-    )
+    script = accounts.config_dir() / filename
+    command = " ".join(shlex.quote(part) for part in [str(binary), *args])
+    preamble = f"echo {shlex.quote(intro)}\necho\n" if intro else ""
     script.write_text(
         "#!/bin/zsh\n"
         "script_path=$0\n"
         "rm -f -- \"$script_path\"\n"
+        f"{preamble}"
         f"{command}\n"
         "status=$?\n"
         "echo\n"
         "if [ $status -eq 0 ]; then\n"
-        "  echo 'Sign-in complete. You can return to appfit.'\n"
+        f"  echo {shlex.quote(success)}\n"
         "else\n"
-        "  echo 'Sign-in failed. Review the message above.'\n"
+        f"  echo {shlex.quote(failure)}\n"
         "fi\n"
         "read -k 1 '?Press any key to close this window.'\n"
         "exit $status\n"

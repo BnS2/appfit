@@ -48,6 +48,7 @@ def stage_helper() -> Path:
     destination.chmod(0o755)
     manifest = {
         "compatibility_metadata": True,
+        "patch_revision": toolchain.PATCH_REVISION,
         "release": toolchain.IPATOOL_RELEASE,
         "repository": toolchain.IPATOOL_REPOSITORY,
         "revision": toolchain.IPATOOL_REVISION,
