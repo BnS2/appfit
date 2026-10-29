@@ -13,6 +13,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.10.2"
+          enable-cache: false
+      - name: Check resolved dependency inventory without installing
+        run: uv lock --check --no-build --no-python-downloads
+
   test:
     runs-on: macos-latest
     strategy:
