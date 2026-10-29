@@ -31,6 +31,28 @@ Tests that use an Apple ID or physical device must never run in CI. Redact Apple
 IDs, device UDIDs, App Store session data, and IPA contents from issues and test
 logs.
 
+## Dependency inventory
+
+`uv.lock` is a reproducible resolver inventory snapshot of the package's direct
+and transitive dependencies, including all `device`, `gui`, `package`, and `dev`
+extras and Python/platform resolution branches. It is input for security
+scanning, not an installed-artifact SBOM: the pip-based test, build, release, and
+user installation paths can resolve different versions. Build isolation tools,
+the frozen Python runtime, and the bundled Go helper need separate evidence.
+
+Use uv 0.10.2 to update it after changing dependency declarations:
+
+```bash
+uv lock --no-build --no-python-downloads
+uv lock --check --no-build --no-python-downloads
+```
+
+To deliberately refresh all resolved versions, add `--upgrade` to the first
+command and review the lockfile diff. These commands resolve published metadata;
+they do not sync an environment or install dependencies. appfit's metadata is
+static in `pyproject.toml`; keep it static so locking does not invoke a project
+build backend. CI checks lock freshness independently of the application tests.
+
 ## Pull requests
 
 - Add regression coverage for behavior changes.
