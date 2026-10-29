@@ -16,6 +16,7 @@ import json
 import os
 import platform
 import plistlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -116,7 +117,18 @@ def main() -> None:
         action="store_true",
         help="build the .app only, without the drag-to-Applications image",
     )
+    parser.add_argument(
+        "--codesign-identity", help="Developer ID Application identity for release builds"
+    )
     args = parser.parse_args()
+
+    sys.path.insert(0, str(SOURCE))
+    from appfit._bundle_check import check
+
+    try:
+        check()
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
 
     helper = SOURCE / "appfit" / "bin" / architecture() / "ipatool"
     if not args.skip_helper:
@@ -166,8 +178,10 @@ def main() -> None:
         "io.github.bns2.appfit",
         str(SOURCE / "appfit" / "gui_main.py"),
     ]
+    if args.codesign_identity:
+        command[1:1] = ["--codesign-identity", args.codesign_identity]
     if args.dry_run:
-        print(" ".join(command))
+        print(shlex.join(command))
         return
     environment = dict(os.environ)
     environment["PYINSTALLER_CONFIG_DIR"] = str(
@@ -202,10 +216,10 @@ def main() -> None:
     )
     with info_path.open("wb") as output:
         plistlib.dump(info, output)
-    subprocess.run(
-        ["codesign", "--force", "--deep", "--sign", "-", str(destination)],
-        check=True,
-    )
+    signing = ["codesign", "--force", "--sign", args.codesign_identity or "-"]
+    if args.codesign_identity:
+        signing += ["--options", "runtime", "--timestamp"]
+    subprocess.run([*signing, str(destination)], check=True)
     print(destination)
     if not args.skip_dmg:
         print(package_disk_image(destination, version))

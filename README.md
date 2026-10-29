@@ -23,14 +23,17 @@ suits scripting and repeated runs.
 
 ## Install the Mac app
 
+The existing **v0.3.1 disk images bundle outdated Python and CA certificates**.
+Use a patched Python environment with the terminal installation below until
+replacement signed and notarized disk images are published. Do not bypass
+Gatekeeper for the old disk images.
+
 1. Download `appfit-<version>-arm64.dmg` (Apple silicon) or
    `appfit-<version>-x86_64.dmg` (Intel) from
    [GitHub Releases](https://github.com/BnS2/appfit/releases).
 2. Open the disk image and drag **appfit** to **Applications**.
-3. appfit is not notarized by Apple. On first launch, right-click the app and
-   choose **Open**, then **Open** again. If macOS still refuses, allow it once
-   under **System Settings → Privacy & Security**. Later launches are normal
-   double-clicks.
+3. Use a release whose notes confirm signing and notarization. Future releases
+   verify these requirements before publishing the disk images.
 
 That is the whole install. The App Store helper travels inside the app, so
 Python and Go are not required.
@@ -40,6 +43,10 @@ Python and Go are not required.
 Requires macOS, Python 3.10 or newer, and Go, which builds appfit's App Store
 helper.
 
+Use a current security-patched Python release, for example 3.12.16 or later in
+the 3.12 branch, 3.13.18 or later in 3.13, or 3.14.10 or later in 3.14. A wheel
+uses your environment's Python and certificates; it does not repair old ones.
+
 ```bash
 brew install go
 mkdir -p "$HOME/appfit"
@@ -48,12 +55,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Download `appfit-0.3.1-py3-none-any.whl` from
+Download `appfit-0.3.2-py3-none-any.whl` from
 [GitHub Releases](https://github.com/BnS2/appfit/releases), then install it.
 Include the `device` extra for USB installation:
 
 ```bash
-pip install "$HOME/Downloads/appfit-0.3.1-py3-none-any.whl[device]"
+pip install "$HOME/Downloads/appfit-0.3.2-py3-none-any.whl[device]"
 appfit ipatool install
 ```
 

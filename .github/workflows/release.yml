@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -22,10 +22,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
-          python-version: "3.12"
-          cache: pip
+          version: "0.10.2"
+          enable-cache: false
+      - name: Install patched Python (security releases have no python.org Mac installer)
+        run: |
+          uv python install --python-downloads-json-url \
+            https://raw.githubusercontent.com/astral-sh/uv/d041e5700a7bb39bff687ebbba4f6f6f2bda5cc8/crates/uv-python-managed/download-metadata.json \
+            3.12.16
+          uv venv --seed --python 3.12.16 .venv
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
@@ -35,21 +42,111 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest -m "not network"
-      - name: Build application and disk image
-        run: python scripts/build_macos_app.py
+      - name: Verify release version before credential use
+        run: python scripts/release_check.py "$GITHUB_REF_NAME"
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          python - <<'PYTHON'
+          import base64, os, secrets, subprocess
+          from pathlib import Path
+          required = ("CERTIFICATE", "CERTIFICATE_PASSWORD", "SIGNING_IDENTITY",
+                      "APPLE_ID", "APPLE_TEAM_ID", "NOTARY_PASSWORD")
+          missing = [name for name in required if not os.environ[name]]
+          if missing:
+              raise SystemExit("Configure release secrets: " + ", ".join(missing))
+          temp = Path(os.environ["RUNNER_TEMP"])
+          keychain = str(temp / "appfit-signing.keychain-db")
+          certificate = temp / "appfit-signing.p12"
+          password = secrets.token_urlsafe(32)
+          print("::add-mask::" + password, flush=True)
+          certificate.touch(mode=0o600, exist_ok=False)
+          certificate.write_bytes(base64.b64decode(os.environ["CERTIFICATE"], validate=True))
+          try:
+              subprocess.run(["security", "create-keychain", "-p", password, keychain], check=True)
+              subprocess.run(["security", "set-keychain-settings", "-lut", "21600", keychain], check=True)
+              subprocess.run(["security", "unlock-keychain", "-p", password, keychain], check=True)
+              subprocess.run(["security", "import", str(certificate), "-k", keychain,
+                              "-P", os.environ["CERTIFICATE_PASSWORD"], "-T", "/usr/bin/codesign"], check=True)
+              subprocess.run(["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:",
+                              "-s", "-k", password, keychain], check=True)
+              subprocess.run(["security", "list-keychains", "-d", "user", "-s", keychain], check=True)
+          finally:
+              certificate.unlink(missing_ok=True)
+          PYTHON
+      - name: Build Developer ID application
+        env:
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: python scripts/build_macos_app.py --skip-dmg --codesign-identity "$SIGNING_IDENTITY"
       - name: Verify and smoke-test bundle
         env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           QT_QPA_PLATFORM: offscreen
           XDG_CONFIG_HOME: ${{ runner.temp }}/appfit-smoke-config
         run: |
           APP_PATH="deployment/appfit-$(uname -m).app"
-          codesign --verify --deep --strict "$APP_PATH"
+          python scripts/verify_macos_signature.py "$APP_PATH" "$APPLE_TEAM_ID"
+          mkdir -p deployment/reports
+          "$APP_PATH/Contents/MacOS/appfit" --check-bundle-runtime \
+            "$(pwd)/deployment/reports/runtime-$(uname -m).json"
+          cat "deployment/reports/runtime-$(uname -m).json"
           "$APP_PATH/Contents/MacOS/appfit" &
           APP_PID=$!
           sleep 5
           kill -0 "$APP_PID"
           kill "$APP_PID"
           wait "$APP_PID" || true
+      - name: Notarize, staple, and package public disk image
+        env:
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          APP_PATH="deployment/appfit-$(uname -m).app"
+          notarize() {
+            xcrun notarytool submit "$1" --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" --password "$NOTARY_PASSWORD" \
+              --wait --output-format json > "$2"
+            python -c 'import sys; from pathlib import Path; from scripts.verify_macos_signature import validate_notarization; validate_notarization(Path(sys.argv[1]))' "$2"
+          }
+          ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/appfit.zip"
+          notarize "$RUNNER_TEMP/appfit.zip" "deployment/reports/notary-app-$(uname -m).json"
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          spctl --assess --type execute --verbose=4 "$APP_PATH"
+          python - <<'PYTHON'
+          import tomllib
+          from pathlib import Path
+          from scripts.build_macos_app import architecture, package_disk_image
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          package_disk_image(Path("deployment") / f"appfit-{architecture()}.app", version)
+          PYTHON
+          VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          DMG="deployment/appfit-$VERSION-$(uname -m).dmg"
+          codesign --sign "$SIGNING_IDENTITY" --timestamp "$DMG"
+          notarize "$DMG" "deployment/reports/notary-dmg-$(uname -m).json"
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          codesign --verify --strict "$DMG"
+          hdiutil verify "$DMG"
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/appfit-signing.keychain-db" ]]; then
+            security delete-keychain "$RUNNER_TEMP/appfit-signing.keychain-db"
+          fi
+      - name: Preserve runtime and Apple acceptance evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: appfit-release-evidence-${{ matrix.runner }}
+          path: deployment/reports/*.json
       - name: Upload disk image
         uses: actions/upload-artifact@v7
         with:
@@ -57,6 +154,8 @@ jobs:
           path: deployment/*.dmg
 
   release:
+    permissions:
+      contents: write
     needs: desktop
     runs-on: macos-latest
 
