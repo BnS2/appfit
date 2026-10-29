@@ -11,14 +11,24 @@ from appfit import _bundle_check
 
 
 @pytest.fixture
-def supported_runtime(monkeypatch):
+def supported_runtime(monkeypatch, tmp_path):
     version = namedtuple("Version", "major minor micro releaselevel serial")
     monkeypatch.setattr(sys, "version_info", version(3, 12, 16, "final", 0))
     monkeypatch.setattr(_bundle_check.certifi, "__version__", "2026.10.23")
+    # Compatibility runners may retain old certifi; isolate the clean-store fixture.
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_verify_locations(cafile=_bundle_check.certifi.where())
+    root = next(
+        der for der in context.get_ca_certs(binary_form=True)
+        if hashlib.sha256(der).hexdigest() not in _bundle_check._DISTRUSTED_ROOTS
+    )
+    ca_file = tmp_path / "clean-ca.pem"
+    ca_file.write_text(ssl.DER_cert_to_PEM_cert(root))
+    monkeypatch.setattr(_bundle_check.certifi, "where", lambda: str(ca_file))
     return version
 
 
-def test_current_bundle_runtime_and_ca_store_pass(supported_runtime):
+def test_patched_versions_and_clean_ca_store_pass(supported_runtime):
     result = _bundle_check.check()
     assert result["python"] == "3.12.16"
     assert result["certifi"] == "2026.10.23"
