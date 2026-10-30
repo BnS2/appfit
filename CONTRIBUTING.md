@@ -76,8 +76,9 @@ publish the unsigned test artifacts as a release.
 
 Tags matching `v*` start the release workflow. It verifies the tag against the
 package version and changelog, repeats the offline tests, builds wheel and source
-archives, builds the Apple silicon and Intel disk images, and publishes them all
-to a GitHub Release. It does not publish to PyPI.
+archives, builds signed/notarized Apple silicon and Intel disk images, and
+publishes them all to a GitHub Release only after verification passes. It does
+not publish to PyPI. The desktop jobs have no repository write permission.
 
 ## Releases
 
@@ -86,6 +87,26 @@ to a GitHub Release. It does not publish to PyPI.
    and `python -m build`.
 3. Push the release commit to `main` and wait for CI to pass.
 4. Create and push an annotated `v<version>` tag.
+
+Before step 4, the developer must approve the release and configure these
+repository secrets through GitHub's secret store: `MACOS_CERTIFICATE_P12`
+(base64 Developer ID Application certificate plus private key),
+`MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGNING_IDENTITY` (certificate identity or
+fingerprint), `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_NOTARY_PASSWORD` (an
+app-specific password). An Apple Development certificate is insufficient.
+The workflow imports the certificate into an ephemeral runner keychain and
+deletes it afterward. No signing/notary credentials are exposed to PR jobs.
+
+The workflow signs nested code through PyInstaller with hardened runtime,
+checks the expected Developer ID team and secure timestamp, and executes the
+frozen app's `--check-bundle-runtime <report.json>` before its GUI smoke test.
+It notarizes and staples the app, packages it, then signs, notarizes and staples
+the disk image. Both Apple submissions must report `Accepted`; stapler,
+Gatekeeper and disk-image checks must pass. Per-architecture runtime/CA hashes
+and Apple acceptance reports are retained as workflow artifacts. These steps
+must be exercised with approved credentials before claiming release readiness;
+unit tests do not establish signing or notarization acceptance. Do not replace
+old public assets with an unsigned test candidate.
 
 The release notes are composed by `scripts/release_notes.py`: the changelog
 entry for that version with its bullets unwrapped, closed by a `Full Changelog`
@@ -97,22 +118,32 @@ filename.
 
 ## Build the Mac application locally
 
-Use a Python 3.12 environment so the frozen runtime has a stable deployment
-baseline:
+Use final Python 3.12.16 or newer in the 3.12 branch so the frozen runtime has a
+patched, stable deployment baseline. The builder rejects older/prerelease Python,
+old certifi, and a CA store containing the distrusted emSign ECC G3/C3 roots:
 
 ```bash
-python3.12 -m venv .venv-build
+uv python install --python-downloads-json-url \
+  https://raw.githubusercontent.com/astral-sh/uv/d041e5700a7bb39bff687ebbba4f6f6f2bda5cc8/crates/uv-python-managed/download-metadata.json \
+  3.12.16
+uv venv --seed --python 3.12.16 .venv-build
 .venv-build/bin/pip install -e ".[gui,package]"
 .venv-build/bin/python scripts/build_macos_app.py
 ```
+
+Python 3.12 security releases are source-only on python.org; `setup-python`'s
+Mac downloads stop at 3.12.10. Mac CI uses uv 0.10.2 and a pinned official Astral
+download manifest with archive checksums for both architectures. Update that
+manifest pin and Python version together when moving to a newer patch.
 
 The build compiles the pinned patched ipatool, places it inside the bundle,
 generates the icon family from `assets/appfit-icon-1024.png`, produces
 `deployment/appfit-<architecture>.app`, sets a macOS 13 minimum, and applies an
 ad-hoc signature for local testing. It then wraps the bundle in
 `deployment/appfit-<version>-<architecture>.dmg` alongside an Applications
-symlink; pass `--skip-dmg` to build the app alone. Release signing and
-notarization are intentionally separate credentialed steps.
+symlink; pass `--skip-dmg` to build the app alone. The default build remains
+ad-hoc signed for private testing. Release builds use `--codesign-identity` and
+the workflow's separate credentialed notarization steps.
 
 ## Refresh the README screenshots
 
