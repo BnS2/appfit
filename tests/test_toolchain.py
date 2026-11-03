@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -124,6 +125,24 @@ def test_bundled_patch_supports_cli_prompt_and_gui_stdin():
     assert "appstore.ErrAuthCodeRequired) && interactive" in text
     assert '"auth-code-stdin"' in text
     assert "AuthCode: authCode" in text
+
+
+@pytest.mark.skipif(
+    os.environ.get("APPFIT_REAL_IPATOOL") != "1",
+    reason="set APPFIT_REAL_IPATOOL=1 (needs network, git and go)",
+)
+def test_bundled_patch_applies_and_builds_on_pinned_ipatool(tmp_path):
+    src = tmp_path / "ipatool"
+    toolchain._run(["git", "clone", "--quiet", toolchain.IPATOOL_REPOSITORY, str(src)])
+    toolchain._run(["git", "checkout", "--quiet", toolchain.IPATOOL_REVISION], cwd=src)
+    with toolchain._patch_file() as patch:
+        for extra in (["--check"], []):
+            toolchain._run(
+                ["git", "apply", "--unidiff-zero", *extra, str(patch)], cwd=src
+            )
+    toolchain._run(["go", "build", "./..."], cwd=src)
+    toolchain._run(["go", "generate", "./..."], cwd=src)  # mocks the tests need
+    toolchain._run(["go", "test", "./pkg/appstore", "-run", "Login"], cwd=src)
 
 
 def test_install_rejects_moved_release_tag(tmp_path, monkeypatch):

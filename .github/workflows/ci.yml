@@ -47,6 +47,15 @@ jobs:
           python -c "import PIL; assert int(PIL.__version__.split('.')[0]) >= 13, PIL.__version__"
       - name: Test without public-network cases
         run: pytest -m "not network"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        if: matrix.python-version == '3.11'
+        with:
+          go-version: '1.25'
+      - name: Apply and build the bundled ipatool patch
+        if: matrix.python-version == '3.11'
+        env:
+          APPFIT_REAL_IPATOOL: "1"
+        run: pytest -q tests/test_toolchain.py -k applies_and_builds
       - name: Build wheel
         run: python -m pip wheel --no-deps --wheel-dir dist .
 
