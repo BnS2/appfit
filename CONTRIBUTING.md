@@ -74,7 +74,7 @@ build backend. CI checks lock freshness independently of the application tests.
 ## CI/CD
 
 Pushes to `main` and pull requests run the offline test suite on macOS with
-Python 3.10 and 3.14, build a wheel, and run the GUI/widget suite offscreen on
+Python 3.11 and 3.14, build a wheel, and run the GUI/widget suite offscreen on
 Python 3.12. CI must not use Apple credentials or a physical device.
 
 The manually triggered `macOS App` workflow builds unsigned test bundles for
