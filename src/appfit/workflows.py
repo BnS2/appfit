@@ -199,6 +199,7 @@ class BuildWorkflow:
         self.client = client or StoreClient()
         self.directory = Path(directory) if directory else ipa_dir()
         self._licensed: set[tuple[str, str]] = set()
+        self._claim_results: dict[tuple[str, str], bool] = {}
 
     def _claim(self, app: App, account: str) -> bool:
         """Claim a licence once per session, stopping at a verification request.
@@ -210,7 +211,8 @@ class BuildWorkflow:
         """
         licence = (account.casefold(), app.bundle_id)
         if licence in self._licensed:
-            return False
+            # A claim finished by a verification code reports its own result once.
+            return self._claim_results.pop(licence, False)
         try:
             claimed = self.client.purchase(app.bundle_id)
         except AuthCodeRequired as exc:
@@ -242,7 +244,9 @@ class BuildWorkflow:
             ) from exc
         except (IpatoolMissing, StoreError) as exc:
             raise WorkflowError(str(exc)) from exc
-        self._licensed.add((account.casefold(), app.bundle_id))
+        licence = (account.casefold(), app.bundle_id)
+        self._licensed.add(licence)
+        self._claim_results[licence] = claimed
         return claimed
 
     def active_account(self):

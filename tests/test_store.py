@@ -158,6 +158,7 @@ def test_auth_code_demand_becomes_a_distinct_failure(monkeypatch):
     monkeypatch.setattr(
         store, "selected_ipatool", lambda: (Path("/usr/bin/true"), "test")
     )
+    monkeypatch.setattr(store, "_supports_auth_code_stdin", lambda binary: True)
     monkeypatch.setattr(
         store.subprocess,
         "run",
@@ -172,6 +173,43 @@ def test_auth_code_demand_becomes_a_distinct_failure(monkeypatch):
         store.StoreClient().purchase("com.example.app")
 
     assert "six-digit code" in str(failure.value)
+
+
+
+def test_helper_without_auth_code_flag_stops_before_asking_for_a_code(monkeypatch):
+    monkeypatch.setattr(
+        store, "selected_ipatool", lambda: (Path("/usr/bin/true"), "test")
+    )
+    monkeypatch.setattr(store, "_supports_auth_code_stdin", lambda binary: False)
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            stdout='{"level":"error","error":"auth code is required","success":false}',
+            stderr="",
+            returncode=1,
+        ),
+    )
+
+    with pytest.raises(store.StoreError, match="appfit ipatool install") as failure:
+        store.StoreClient().purchase("com.example.app")
+
+    assert not isinstance(failure.value, store.AuthCodeRequired)
+
+
+def test_probe_reads_the_flag_from_purchase_help(monkeypatch):
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout="  --auth-code-stdin  read code", stderr=""),
+    )
+    assert store._supports_auth_code_stdin(Path("/usr/bin/true")) is True
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout="usage: ipatool purchase", stderr=""),
+    )
+    assert store._supports_auth_code_stdin(Path("/usr/bin/true")) is False
 
 
 def test_interactive_purchase_leaves_the_terminal_to_ipatool(monkeypatch):

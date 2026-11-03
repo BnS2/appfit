@@ -1189,6 +1189,7 @@ class AppfitWindow(QMainWindow):
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            dialog.take_code()  # the dialog is parent-owned; drop any typed digits
             return None
         return dialog.take_code()
 

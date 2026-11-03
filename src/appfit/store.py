@@ -165,6 +165,18 @@ def _run_watched(
     return out, err, proc.returncode
 
 
+def _supports_auth_code_stdin(binary: Path) -> bool:
+    """True when the helper advertises --auth-code-stdin; the probe makes no store request."""
+    try:
+        result = subprocess.run(
+            [str(binary), "purchase", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "--auth-code-stdin" in (result.stdout or "") + (result.stderr or "")
+
+
 def _run(
     args: list[str],
     timeout: int = 900,
@@ -216,6 +228,11 @@ def _run(
         if normalized == _EMPTY_RESPONSE:
             raise BuildNotServed(message)
         if normalized == _AUTH_CODE_REQUIRED:
+            if not _supports_auth_code_stdin(binary):
+                raise StoreError(
+                    "Apple asked for a verification code, but this ipatool helper cannot take one. "
+                    "Run `appfit ipatool install` to update it, or finish the sign-in in Terminal."
+                )
             raise AuthCodeRequired()
         raise StoreError(message)
     return payload

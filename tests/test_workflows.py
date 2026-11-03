@@ -401,6 +401,8 @@ def test_verification_claim_forwards_the_code_and_resumes_as_licensed(tmp_path):
     workflow = BuildWorkflow(client, tmp_path / "ipa")
 
     assert workflow.verify_claim(APP, "owner@example.com", "123456") is True
+    # The restarted action reports the verified result once, then sees the licence as held.
+    assert workflow.claim(APP, "owner@example.com") is True
     assert workflow.claim(APP, "owner@example.com") is False
 
     assert supplied == [(APP.bundle_id, "123456")]
