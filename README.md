@@ -37,7 +37,7 @@ Python and Go are not required.
 
 ## Install for the terminal
 
-Requires macOS, Python 3.10 or newer, and Go, which builds appfit's App Store
+Requires macOS, Python 3.11 or newer, and Go, which builds appfit's App Store
 helper.
 
 ```bash

@@ -4,7 +4,7 @@ version = "0.3.1"
 description = "Get modern apps onto aged-out iOS devices via Apple's own last-compatible-version mechanism"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["ios", "ipad", "app-store", "ipa", "ipatool"]
 dependencies = [
     "requests>=2.31",
@@ -13,8 +13,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-device = ["pymobiledevice3>=11.0"]
-gui = ["PySide6>=6.8,<7", "pymobiledevice3>=11.0"]
+device = ["pillow>=13.0.0", "pymobiledevice3>=11.0"]
+gui = ["PySide6>=6.8,<7", "pillow>=13.0.0", "pymobiledevice3>=11.0"]
 package = ["PyInstaller>=6.15,<7"]
 dev = ["pytest>=8.0"]
 

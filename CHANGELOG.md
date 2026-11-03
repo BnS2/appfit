@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## Unreleased
 
+### Security
+
+- Pillow is now required at 13.0.0 or later for the `device` and `gui` extras,
+  which resolves the Pillow advisories tracked in BnS2/repo-safety#88. appfit
+  now requires Python 3.11 or later; Python 3.10 is no longer supported.
+
 ### Fixed
 
 - Claiming a licence no longer ends at `auth code is required` when Apple wants
