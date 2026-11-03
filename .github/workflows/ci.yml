@@ -39,6 +39,12 @@ jobs:
           cache: pip
       - name: Install
         run: python -m pip install -e ".[dev]"
+
+      - name: Check the device extra on the minimum Python
+        if: matrix.python-version == '3.11'
+        run: |
+          python -m pip install -e ".[dev,device]"
+          python -c "import PIL; assert int(PIL.__version__.split('.')[0]) >= 13, PIL.__version__"
       - name: Test without public-network cases
         run: pytest -m "not network"
       - name: Build wheel
