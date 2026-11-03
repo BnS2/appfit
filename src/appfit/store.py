@@ -50,6 +50,26 @@ class WrongAccount(StoreError):
     """The signed-in Apple ID is not the one this device is paired to."""
 
 
+class AuthCodeRequired(StoreError):
+    """Apple wants a fresh two-factor sign-in before it will grant a licence.
+
+    A purchase can be refused with a "sign in again" failure even while the
+    saved session still reads build history. ipatool then signs in again on its
+    own with the stored password, which sends an "Allow" prompt to every
+    trusted device -- but in --non-interactive mode it cannot ask for the code
+    that prompt shows. Callers must stop here and request the code explicitly,
+    never retry the same unauthenticated claim silently.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Apple needs a verification code before it will add this app.\n"
+            "Apple sent a sign-in request to your trusted devices. Tap Allow "
+            "once, then enter the six-digit code when appfit asks for it. "
+            "Retrying without the code only sends another request."
+        )
+
+
 class BuildNotServed(StoreError):
     """The store answered normally but handed back no package.
 
@@ -65,6 +85,9 @@ class BuildNotServed(StoreError):
 # ipatool's wording for an empty song list, across list-versions,
 # get-version-metadata, and download alike.
 _EMPTY_RESPONSE = "invalid response"
+
+# ipatool's wording when Apple asks its automatic re-login for a 2FA code.
+_AUTH_CODE_REQUIRED = "auth code is required"
 
 
 @dataclass
@@ -142,11 +165,24 @@ def _run_watched(
     return out, err, proc.returncode
 
 
+def _supports_auth_code_stdin(binary: Path) -> bool:
+    """True when the helper advertises --auth-code-stdin; the probe makes no store request."""
+    try:
+        result = subprocess.run(
+            [str(binary), "purchase", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "--auth-code-stdin" in (result.stdout or "") + (result.stderr or "")
+
+
 def _run(
     args: list[str],
     timeout: int = 900,
     watch: Path | None = None,
     on_progress: Callable[[int], None] | None = None,
+    stdin_text: str | None = None,
 ) -> dict:
     """Run ipatool with JSON output and return the parsed result."""
     binary, _source = selected_ipatool()
@@ -155,9 +191,21 @@ def _run(
 
     argv = [str(binary), *args, "--format", "json", "--non-interactive"]
     if watch is not None and on_progress is not None:
+        if stdin_text is not None:
+            raise ValueError("watched ipatool commands cannot receive stdin")
         stdout, stderr, returncode = _run_watched(argv, watch, on_progress, timeout)
     else:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        try:
+            proc = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                input=stdin_text,
+            )
+        finally:
+            # A verification code must not survive in a traceback frame.
+            stdin_text = None
         stdout, stderr, returncode = proc.stdout, proc.stderr, proc.returncode
 
     # ipatool emits one JSON object per line; the last is the result.
@@ -176,8 +224,16 @@ def _run(
             or (stderr or "").strip()
             or f"ipatool {' '.join(args)} failed (exit {returncode})"
         )
-        if str(message).strip().lower() == _EMPTY_RESPONSE:
+        normalized = str(message).strip().lower()
+        if normalized == _EMPTY_RESPONSE:
             raise BuildNotServed(message)
+        if normalized == _AUTH_CODE_REQUIRED:
+            if not _supports_auth_code_stdin(binary):
+                raise StoreError(
+                    "Apple asked for a verification code, but this ipatool helper cannot take one. "
+                    "Run `appfit ipatool install` to update it, or finish the sign-in in Terminal."
+                )
+            raise AuthCodeRequired()
         raise StoreError(message)
     return payload
 
@@ -228,6 +284,29 @@ class StoreClient:
     def purchase(self, bundle_id: str) -> bool:
         """Claim a free licence. True if newly claimed, False if already owned."""
         data = _run(["purchase", "-b", bundle_id], timeout=180)
+        return not bool(data.get("alreadyOwned"))
+
+    def purchase_with_auth_code(self, bundle_id: str, auth_code: str) -> bool:
+        """Retry a licence claim with a six-digit code delivered over stdin.
+
+        The code is deliberately absent from argv and the environment, and the
+        local reference is cleared before an error can leave this frame.
+        """
+        auth_code = auth_code.strip()
+        if not (
+            len(auth_code) == 6
+            and auth_code.isascii()
+            and auth_code.isdigit()
+        ):
+            raise StoreError("Enter the six-digit verification code from Apple.")
+        try:
+            data = _run(
+                ["purchase", "-b", bundle_id, "--auth-code-stdin"],
+                timeout=180,
+                stdin_text=f"{auth_code}\n",
+            )
+        finally:
+            auth_code = ""
         return not bool(data.get("alreadyOwned"))
 
     # -------------------------------------------------------------- builds
@@ -351,3 +430,16 @@ def login_interactively(email: str) -> int:
     if binary is None:
         raise IpatoolMissing()
     return subprocess.run([str(binary), "auth", "login", "-e", email]).returncode
+
+
+def purchase_interactively(bundle_id: str) -> int:
+    """Claim a licence with the terminal attached so ipatool can ask for 2FA.
+
+    appfit's patched helper prompts for the code when the claim's automatic
+    re-login needs one, then saves the refreshed session. Not captured, for the
+    same reason as `login_interactively`.
+    """
+    binary, _source = selected_ipatool()
+    if binary is None:
+        raise IpatoolMissing()
+    return subprocess.run([str(binary), "purchase", "-b", bundle_id]).returncode

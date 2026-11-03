@@ -20,9 +20,10 @@ from appfit.gui.window import (
     AppfitWindow,
     SearchResultRow,
     SpaciousComboBox,
+    VerificationCodeDialog,
 )
 from appfit.store import Account
-from appfit.workflows import BuildCandidate, ResolutionReport
+from appfit.workflows import BuildCandidate, ResolutionReport, VerificationRequired
 
 
 APP = App(1, "com.example.app", "Example", "4.0", "18.0", "Example Co")
@@ -418,4 +419,175 @@ def test_long_store_explanation_keeps_the_summary_line_readable(
     assert shown["text"] == "the App Store served no build for com.example.app."
     assert "Retry in a few days." in shown["detail"]
     assert "empty package list" in window.activity.toPlainText()
+    window.close()
+
+
+def test_verification_dialog_accepts_a_formatted_six_digit_code(application):
+    dialog = VerificationCodeDialog("Example", rejected=True)
+
+    assert dialog.feedback.isVisibleTo(dialog)
+    assert dialog.verify_button.isEnabled() is False
+
+    dialog.show()
+    dialog.code_input.setText("12 34-56")
+
+    assert dialog.code_input.text() == "123456"
+    assert dialog.verify_button.isEnabled()
+    assert not dialog.feedback.isVisibleTo(dialog)
+    assert dialog.take_code() == "123456"
+    assert dialog.code_input.text() == ""
+    dialog.close()
+
+
+def test_claim_needing_a_code_verifies_in_app_and_resumes(
+    application, monkeypatch
+):
+    window = make_window(application, monkeypatch)
+    verified = []
+    window.workflow.verify_claim = (
+        lambda app, account, code: verified.append((app, account, code)) or True
+    )
+    monkeypatch.setattr(window, "_ask_verification_code", lambda _error: "123456")
+    started = {}
+
+    def start(task, on_success, **kwargs):
+        started.update(task=task, on_success=on_success, **kwargs)
+
+    monkeypatch.setattr(window, "_start_task", start)
+    monkeypatch.setattr(
+        window,
+        "_show_error",
+        lambda message: pytest.fail(f"dead-end error shown: {message}"),
+    )
+    resumed = []
+
+    window._task_failed(
+        VerificationRequired(
+            APP,
+            "owner@example.com",
+            "Apple needs a verification code.\nTap Allow once.",
+        ),
+        lambda: resumed.append(True),
+    )
+
+    claimed = started["task"](lambda _event: None)
+    started["on_success"](claimed)
+
+    assert verified == [(APP, "owner@example.com", "123456")]
+    assert resumed == [True]
+    assert started["description"] == "Verifying Example with Apple…"
+    window.close()
+
+
+def test_verification_resumes_the_original_worker_task(
+    application, monkeypatch
+):
+    window = make_window(application, monkeypatch)
+    monkeypatch.setattr(window, "_ask_verification_code", lambda _error: "123456")
+    verified = []
+    window.workflow.verify_claim = (
+        lambda app, account, code: verified.append((app, account, code)) or True
+    )
+    attempts = []
+
+    def task(_progress):
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise VerificationRequired(APP, "owner@example.com", "code required")
+        return "continued"
+
+    completed = []
+    window._start_task(task, completed.append, description="Finding Example…")
+    for _attempt in range(100):
+        application.processEvents()
+        if completed and window._busy == 0:
+            break
+        QTest.qWait(10)
+
+    assert len(attempts) == 2
+    assert verified == [(APP, "owner@example.com", "123456")]
+    assert completed == ["continued"]
+    assert window._busy == 0
+    window.close()
+
+
+def test_rejected_code_reopens_verification_before_resuming(
+    application, monkeypatch
+):
+    window = make_window(application, monkeypatch)
+    codes = iter(("111111", "222222"))
+    prompt_states = []
+
+    def ask(error):
+        prompt_states.append(error.rejected)
+        return next(codes)
+
+    monkeypatch.setattr(window, "_ask_verification_code", ask)
+    verified = []
+
+    def verify(app, account, code):
+        verified.append(code)
+        if len(verified) == 1:
+            raise VerificationRequired(
+                app,
+                account,
+                "That verification code was not accepted.",
+                rejected=True,
+            )
+        return True
+
+    window.workflow.verify_claim = verify
+    attempts = []
+
+    def task(_progress):
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise VerificationRequired(APP, "owner@example.com", "code required")
+        return "continued"
+
+    completed = []
+    window._start_task(task, completed.append, description="Finding Example…")
+    for _attempt in range(100):
+        application.processEvents()
+        if completed and window._busy == 0:
+            break
+        QTest.qWait(10)
+
+    assert prompt_states == [False, True]
+    assert verified == ["111111", "222222"]
+    assert len(attempts) == 2
+    assert completed == ["continued"]
+    window.close()
+
+
+def test_cancelling_in_app_verification_leaves_the_action_stopped(
+    application, monkeypatch
+):
+    window = make_window(application, monkeypatch)
+    monkeypatch.setattr(window, "_ask_verification_code", lambda _error: None)
+    monkeypatch.setattr(
+        window,
+        "_start_task",
+        lambda *args, **kwargs: pytest.fail("cancel must not start verification"),
+    )
+    resumed = []
+
+    window._task_failed(
+        VerificationRequired(APP, "owner@example.com", "code required"),
+        lambda: resumed.append(True),
+    )
+
+    assert resumed == []
+    assert window.activity_summary.text() == "Verification cancelled — no changes made"
+    window.close()
+
+
+def test_other_task_failures_still_show_the_error(application, monkeypatch):
+    window = make_window(application, monkeypatch)
+    shown = []
+    monkeypatch.setattr(window, "_show_error", shown.append)
+
+    window._task_failed(RuntimeError("store unavailable"))
+
+    assert shown == ["store unavailable"]
     window.close()

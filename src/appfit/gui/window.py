@@ -20,6 +20,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -52,6 +54,7 @@ from ..workflows import (
     PreparedIPA,
     ProgressEvent,
     ResolutionReport,
+    VerificationRequired,
     WorkflowError,
     launch_login_terminal,
     target_from_manual,
@@ -60,6 +63,7 @@ from .artwork import ArtworkLoader
 
 
 Task = Callable[[Callable[[ProgressEvent], None]], Any]
+ResumeTask = Callable[[], None]
 
 REGULAR_CONTROL_HEIGHT = 30
 CONTROL_ROW_SPACING = 10
@@ -511,12 +515,89 @@ class SearchResultDelegate(QStyledItemDelegate):
             painter.restore()
 
 
+class VerificationCodeDialog(QDialog):
+    """A short-lived six-digit input used only for an active Apple claim."""
+
+    def __init__(
+        self,
+        app_name: str,
+        *,
+        rejected: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Verify with Apple")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        prompt = QLabel(
+            f"Apple needs a verification code before it can add {app_name}. "
+            "Tap Allow on your trusted device, then enter the six-digit code."
+        )
+        prompt.setWordWrap(True)
+        layout.addWidget(prompt)
+
+        self.code_input = QLineEdit(self)
+        self.code_input.setAccessibleName("Six-digit Apple verification code")
+        self.code_input.setPlaceholderText("6-digit code")
+        self.code_input.setMinimumHeight(REGULAR_CONTROL_HEIGHT)
+        # Leave room for pasted forms such as "123 456"; `_code_changed`
+        # normalizes the field back to six ASCII digits immediately.
+        self.code_input.setMaxLength(12)
+        self.code_input.setInputMethodHints(Qt.InputMethodHint.ImhDigitsOnly)
+        layout.addWidget(self.code_input)
+
+        self.feedback = QLabel(
+            "That code was not accepted. Enter the newest code shown by Apple."
+        )
+        self.feedback.setObjectName("statusWarning")
+        self.feedback.setWordWrap(True)
+        self.feedback.setVisible(rejected)
+        layout.addWidget(self.feedback)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        self.verify_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.verify_button.setText("Verify")
+        self.verify_button.setObjectName("primaryButton")
+        self.verify_button.setEnabled(False)
+        self.verify_button.setDefault(True)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.code_input.textChanged.connect(self._code_changed)
+
+    def _code_changed(self, value: str) -> None:
+        normalized = "".join(
+            character
+            for character in value
+            if character.isascii() and character.isdigit()
+        )[:6]
+        if normalized != value:
+            self.code_input.blockSignals(True)
+            self.code_input.setText(normalized)
+            self.code_input.blockSignals(False)
+        self.verify_button.setEnabled(len(normalized) == 6)
+        if normalized:
+            self.feedback.hide()
+
+    def take_code(self) -> str:
+        code = self.code_input.text()
+        self.code_input.clear()
+        return code
+
+
 class TaskThread(QThread):
     """Run one blocking backend operation without freezing the window."""
 
     progress = Signal(object)
     succeeded = Signal(object)
-    failed = Signal(str)
+    failed = Signal(object)
 
     def __init__(self, task: Task, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -526,9 +607,13 @@ class TaskThread(QThread):
         try:
             result = self.task(self.progress.emit)
         except Exception as exc:  # normalized at the GUI boundary
-            self.failed.emit(str(exc) or type(exc).__name__)
+            self.failed.emit(exc)
         else:
             self.succeeded.emit(result)
+        finally:
+            # Release task closures promptly; verification tasks briefly carry
+            # the short-lived code that is being forwarded to ipatool.
+            self.task = lambda _progress: None
 
 
 class AppfitWindow(QMainWindow):
@@ -544,6 +629,8 @@ class AppfitWindow(QMainWindow):
         self.current_app: App | None = None
         self.current_report: ResolutionReport | None = None
         self._threads: set[TaskThread] = set()
+        self._task_successes: dict[TaskThread, Callable[[Any], None]] = {}
+        self._verification_resumes: dict[TaskThread, ResumeTask] = {}
         self._busy = 0
         self.artwork_loader = ArtworkLoader(self)
 
@@ -977,9 +1064,18 @@ class AppfitWindow(QMainWindow):
         on_success: Callable[[Any], None],
         *,
         description: str,
+        verification_resume: ResumeTask | None = None,
     ) -> None:
+        if verification_resume is None:
+            verification_resume = lambda: self._start_task(
+                task,
+                on_success,
+                description=description,
+            )
         thread = TaskThread(task, self)
         self._threads.add(thread)
+        self._task_successes[thread] = on_success
+        self._verification_resumes[thread] = verification_resume
         self._busy += 1
         self._update_enabled_state()
         self.progress_bar.show()
@@ -987,16 +1083,20 @@ class AppfitWindow(QMainWindow):
         self.activity_summary.setText(description)
         self.activity.appendPlainText(description)
         thread.progress.connect(self._show_progress)
-        thread.succeeded.connect(on_success)
-        thread.failed.connect(self._show_error)
+        thread.succeeded.connect(self._task_succeeded)
+        thread.failed.connect(self._task_failed)
 
         def finished() -> None:
             self._threads.discard(thread)
+            self._task_successes.pop(thread, None)
+            self._verification_resumes.pop(thread, None)
             self._busy = max(0, self._busy - 1)
-            self.progress_bar.setRange(0, 1)
-            self.progress_bar.setValue(1)
-            self.progress_bar.hide()
+            if self._busy == 0:
+                self.progress_bar.setRange(0, 1)
+                self.progress_bar.setValue(1)
+                self.progress_bar.hide()
             self._update_enabled_state()
+            thread.deleteLater()
 
         thread.finished.connect(finished)
         thread.start()
@@ -1019,6 +1119,79 @@ class AppfitWindow(QMainWindow):
         if event.total is not None and event.current is not None and event.total > 0:
             self.progress_bar.setRange(0, event.total)
             self.progress_bar.setValue(min(event.current, event.total))
+
+    def _task_succeeded(self, result: object) -> None:
+        sender = self.sender()
+        if isinstance(sender, TaskThread):
+            callback = self._task_successes.get(sender)
+            if callback is not None:
+                callback(result)
+
+    def _task_failed(
+        self,
+        error: object,
+        verification_resume: ResumeTask | None = None,
+    ) -> None:
+        if verification_resume is None:
+            sender = self.sender()
+            if isinstance(sender, TaskThread):
+                verification_resume = self._verification_resumes.get(sender)
+        if isinstance(error, VerificationRequired):
+            self._handle_verification(error, verification_resume)
+            return
+        self._show_error(str(error) or type(error).__name__)
+
+    def _handle_verification(
+        self,
+        error: VerificationRequired,
+        resume: ResumeTask | None,
+    ) -> None:
+        """Collect a 2FA code, finish the claim, then resume the same task."""
+        name = error.app.name or error.app.bundle_id
+        self.activity_summary.setText(f"Verification code needed to claim {name}")
+        self.activity.appendPlainText(f"Verification needed: {error}")
+        if resume is None:
+            self._show_error(
+                "Verification is required, but the interrupted action cannot resume."
+            )
+            return
+        code = self._ask_verification_code(error)
+        if code is None:
+            self.activity_summary.setText("Verification cancelled — no changes made")
+            return
+
+        code_holder = [code]
+        code = ""
+
+        def verify(_progress):
+            try:
+                return self.workflow.verify_claim(
+                    error.app,
+                    error.account,
+                    code_holder[0],
+                )
+            finally:
+                code_holder[0] = ""
+
+        self._start_task(
+            verify,
+            lambda _claimed: resume(),
+            description=f"Verifying {name} with Apple…",
+            verification_resume=resume,
+        )
+
+    def _ask_verification_code(
+        self, error: VerificationRequired
+    ) -> str | None:
+        dialog = VerificationCodeDialog(
+            error.app.name or error.app.bundle_id,
+            rejected=error.rejected,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            dialog.take_code()  # the dialog is parent-owned; drop any typed digits
+            return None
+        return dialog.take_code()
 
     def _show_error(self, message: str) -> None:
         """Show a failure without letting a long explanation eat the window.

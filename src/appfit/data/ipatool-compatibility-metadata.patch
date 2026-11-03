@@ -78,3 +78,82 @@ index d824c43..5f9b422 100644
 +		ReleaseDate:      releaseDate,
 +		MinimumOSVersion: minimumOSVersion,
 +		DeviceFamilies:   deviceFamilies,
+diff --git a/cmd/purchase.go b/cmd/purchase.go
+index 0b9f651..3c88b50 100644
+--- a/cmd/purchase.go
++++ b/cmd/purchase.go
+@@ -3,0 +4 @@ import (
++	"bufio"
+@@ -4,0 +6,3 @@ import (
++	"fmt"
++	"os"
++	"strings"
+@@ -14 +18,4 @@ func purchaseCmd() *cobra.Command {
+-	var bundleID string
++	var (
++		bundleID      string
++		authCodeStdin bool
++	)
+@@ -19,0 +27,10 @@ func purchaseCmd() *cobra.Command {
++			interactive, _ := cmd.Context().Value(interactiveKey).(bool)
++			var authCode string
++			if authCodeStdin {
++				var err error
++				authCode, err = readPurchaseAuthCode()
++				if err != nil {
++					return err
++				}
++			}
++
+@@ -34,0 +52 @@ func purchaseCmd() *cobra.Command {
++						AuthCode: authCode,
+@@ -35,0 +54,17 @@ func purchaseCmd() *cobra.Command {
++					// A purchase can demand a fresh two-factor sign-in. Without a prompt
++					// here the re-login sends an "Allow" request to the account's
++					// devices and then fails, so every retry only sends another one.
++					if errors.Is(err, appstore.ErrAuthCodeRequired) && interactive {
++						dependencies.Logger.Log().Msg("enter 2FA code:")
++
++						authCode, readErr := readPurchaseAuthCode()
++						if readErr != nil {
++							return readErr
++						}
++
++						loginResult, err = dependencies.AppStore.Login(appstore.LoginInput{
++							Email:    acc.Email,
++							Password: acc.Password,
++							AuthCode: authCode,
++						})
++					}
+@@ -73,0 +109 @@ func purchaseCmd() *cobra.Command {
++	cmd.Flags().BoolVar(&authCodeStdin, "auth-code-stdin", false, "read the Apple 2FA code from stdin")
+@@ -77,0 +114,9 @@ func purchaseCmd() *cobra.Command {
++
++func readPurchaseAuthCode() (string, error) {
++	authCode, err := bufio.NewReader(os.Stdin).ReadString('\n')
++	if err != nil {
++		return "", fmt.Errorf("failed to read auth code: %w", err)
++	}
++
++	return strings.TrimSpace(authCode), nil
++}
+diff --git a/pkg/appstore/appstore_login.go b/pkg/appstore/appstore_login.go
+index e15fa73..f2ffdfc 100644
+--- a/pkg/appstore/appstore_login.go
++++ b/pkg/appstore/appstore_login.go
+@@ -188 +188 @@ func (t *appstore) parseLoginResponse(res *http.Result[loginResult], attempt int
+-	} else if res.Data.FailureType == "" && authCode == "" && res.Data.CustomerMessage == CustomerMessageBadLogin {
++	} else if res.Data.FailureType == "" && res.Data.CustomerMessage == CustomerMessageBadLogin {
+diff --git a/pkg/appstore/appstore_login_test.go b/pkg/appstore/appstore_login_test.go
+index 29d91ec..401fe45 100644
+--- a/pkg/appstore/appstore_login_test.go
++++ b/pkg/appstore/appstore_login_test.go
+@@ -219,0 +220,8 @@ var _ = Describe("AppStore (Login)", func() {
++
++			It("returns ErrAuthCodeRequired when a supplied code is rejected", func() {
++				_, err := as.Login(LoginInput{
++					Password: testPassword,
++					AuthCode: "000000",
++				})
++				Expect(err).To(Equal(ErrAuthCodeRequired))
++			})

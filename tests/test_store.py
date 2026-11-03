@@ -147,3 +147,122 @@ def test_history_can_be_read_off_one_known_build(monkeypatch):
         "101",
         "102",
     ]
+
+
+def test_auth_code_demand_becomes_a_distinct_failure(monkeypatch):
+    """ipatool's silent re-login cannot ask for a code.
+
+    Treated as an ordinary error, every retry sent another "Allow" prompt to
+    the account's devices, so callers need to recognise it and stop.
+    """
+    monkeypatch.setattr(
+        store, "selected_ipatool", lambda: (Path("/usr/bin/true"), "test")
+    )
+    monkeypatch.setattr(store, "_supports_auth_code_stdin", lambda binary: True)
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            stdout='{"level":"error","error":"auth code is required","success":false}',
+            stderr="",
+            returncode=1,
+        ),
+    )
+
+    with pytest.raises(store.AuthCodeRequired) as failure:
+        store.StoreClient().purchase("com.example.app")
+
+    assert "six-digit code" in str(failure.value)
+
+
+
+def test_helper_without_auth_code_flag_stops_before_asking_for_a_code(monkeypatch):
+    monkeypatch.setattr(
+        store, "selected_ipatool", lambda: (Path("/usr/bin/true"), "test")
+    )
+    monkeypatch.setattr(store, "_supports_auth_code_stdin", lambda binary: False)
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            stdout='{"level":"error","error":"auth code is required","success":false}',
+            stderr="",
+            returncode=1,
+        ),
+    )
+
+    with pytest.raises(store.StoreError, match="appfit ipatool install") as failure:
+        store.StoreClient().purchase("com.example.app")
+
+    assert not isinstance(failure.value, store.AuthCodeRequired)
+
+
+def test_probe_reads_the_flag_from_purchase_help(monkeypatch):
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout="  --auth-code-stdin  read code", stderr=""),
+    )
+    assert store._supports_auth_code_stdin(Path("/usr/bin/true")) is True
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(stdout="usage: ipatool purchase", stderr=""),
+    )
+    assert store._supports_auth_code_stdin(Path("/usr/bin/true")) is False
+
+
+def test_interactive_purchase_leaves_the_terminal_to_ipatool(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        store, "selected_ipatool", lambda: (Path("/usr/bin/ipatool"), "test")
+    )
+    monkeypatch.setattr(
+        store.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs))
+        or SimpleNamespace(returncode=0),
+    )
+
+    assert store.purchase_interactively("com.example.app") == 0
+
+    argv, kwargs = calls[0]
+    assert argv == ["/usr/bin/ipatool", "purchase", "-b", "com.example.app"]
+    assert "--non-interactive" not in argv
+    assert "capture_output" not in kwargs
+
+
+def test_gui_purchase_sends_the_code_only_over_stdin(monkeypatch):
+    observed = {}
+
+    def fake_run(args, timeout, stdin_text):
+        observed.update(args=args, timeout=timeout, stdin_text=stdin_text)
+        return {"alreadyOwned": False}
+
+    monkeypatch.setattr(store, "_run", fake_run)
+
+    claimed = store.StoreClient().purchase_with_auth_code(
+        "com.example.app", "123456"
+    )
+
+    assert claimed is True
+    assert observed["args"] == [
+        "purchase",
+        "-b",
+        "com.example.app",
+        "--auth-code-stdin",
+    ]
+    assert "123456" not in observed["args"]
+    assert observed["stdin_text"] == "123456\n"
+
+
+@pytest.mark.parametrize("code", ["", "12345", "1234567", "12 345", "abcdef"])
+def test_gui_purchase_rejects_malformed_codes_before_ipatool(code, monkeypatch):
+    monkeypatch.setattr(
+        store,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("malformed code reached ipatool"),
+    )
+
+    with pytest.raises(store.StoreError, match="six-digit"):
+        store.StoreClient().purchase_with_auth_code("com.example.app", code)

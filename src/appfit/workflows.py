@@ -28,7 +28,13 @@ from .resolve import (
     metadata_probe,
     newest_compatible,
 )
-from .store import BuildNotServed, IpatoolMissing, StoreClient, StoreError
+from .store import (
+    AuthCodeRequired,
+    BuildNotServed,
+    IpatoolMissing,
+    StoreClient,
+    StoreError,
+)
 from .toolchain import selected_ipatool
 
 IOS_VERSION = re.compile(r"^\d+(?:\.\d+){0,3}$")
@@ -38,6 +44,27 @@ _STORE_URL = re.compile(r"/id\d+")
 
 class WorkflowError(RuntimeError):
     """An actionable failure safe to present in either CLI or GUI."""
+
+
+class VerificationRequired(WorkflowError):
+    """The licence claim needs a two-factor code before it can continue.
+
+    Carries the app and account so the GUI can collect the short-lived code,
+    finish the claim, and resume the interrupted operation.
+    """
+
+    def __init__(
+        self,
+        app: App,
+        account: str,
+        message: str,
+        *,
+        rejected: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.app = app
+        self.account = account
+        self.rejected = rejected
 
 
 @dataclass(frozen=True)
@@ -171,6 +198,56 @@ class BuildWorkflow:
     ) -> None:
         self.client = client or StoreClient()
         self.directory = Path(directory) if directory else ipa_dir()
+        self._licensed: set[tuple[str, str]] = set()
+        self._claim_results: dict[tuple[str, str], bool] = {}
+
+    def _claim(self, app: App, account: str) -> bool:
+        """Claim a licence once per session, stopping at a verification request.
+
+        Every refused claim makes ipatool sign in again, and every sign-in sends
+        an "Allow" prompt to the account's devices. Claiming again before each
+        download, or retrying after Apple asked for a code, turned one missing
+        code into a stream of prompts.
+        """
+        licence = (account.casefold(), app.bundle_id)
+        if licence in self._licensed:
+            # A claim finished by a verification code reports its own result once.
+            return self._claim_results.pop(licence, False)
+        try:
+            claimed = self.client.purchase(app.bundle_id)
+        except AuthCodeRequired as exc:
+            raise VerificationRequired(app, account, str(exc)) from exc
+        self._licensed.add(licence)
+        return claimed
+
+    def verify_claim(self, app: App, account: str, auth_code: str) -> bool:
+        """Finish a claim with a short-lived code and remember its licence.
+
+        The code is passed straight to the store helper and cleared from this
+        frame before any success or failure crosses the workflow boundary.
+        """
+        try:
+            self.client.require_account(account)
+            try:
+                claimed = self.client.purchase_with_auth_code(
+                    app.bundle_id, auth_code
+                )
+            finally:
+                auth_code = ""
+        except AuthCodeRequired as exc:
+            raise VerificationRequired(
+                app,
+                account,
+                "That verification code was not accepted.\n"
+                "Enter the newest six-digit code shown by Apple.",
+                rejected=True,
+            ) from exc
+        except (IpatoolMissing, StoreError) as exc:
+            raise WorkflowError(str(exc)) from exc
+        licence = (account.casefold(), app.bundle_id)
+        self._licensed.add(licence)
+        self._claim_results[licence] = claimed
+        return claimed
 
     def active_account(self):
         return self.client.active_account()
@@ -205,7 +282,7 @@ class BuildWorkflow:
         report = on_progress or _ignore_progress
         try:
             self.client.require_account(account)
-            claimed = self.client.purchase(app.bundle_id) if claim_licence else False
+            claimed = self._claim(app, account) if claim_licence else False
             report(
                 ProgressEvent(
                     "licence",
@@ -414,7 +491,7 @@ class BuildWorkflow:
         report = on_progress or _ignore_progress
         try:
             self.client.require_account(account)
-            self.client.purchase(app.bundle_id)
+            self._claim(app, account)
         except (IpatoolMissing, StoreError) as exc:
             raise WorkflowError(str(exc)) from exc
 
@@ -489,7 +566,7 @@ class BuildWorkflow:
     def claim(self, app: App, account: str) -> bool:
         try:
             self.client.require_account(account)
-            return self.client.purchase(app.bundle_id)
+            return self._claim(app, account)
         except (IpatoolMissing, StoreError) as exc:
             raise WorkflowError(str(exc)) from exc
 
@@ -499,25 +576,43 @@ def launch_login_terminal(email: str) -> Path:
     email = email.strip()
     if not email or "\n" in email or "\r" in email:
         raise WorkflowError("Enter a valid Apple ID email address.")
+    return _launch_helper_terminal(
+        "sign-in.command",
+        ["auth", "login", "-e", email],
+        intro=None,
+        success="Sign-in complete. You can return to appfit.",
+        failure="Sign-in failed. Review the message above.",
+    )
+
+
+def _launch_helper_terminal(
+    filename: str,
+    args: list[str],
+    *,
+    intro: str | None,
+    success: str,
+    failure: str,
+) -> Path:
+    """Open one ipatool command in Terminal with its output uncaptured."""
     binary, _source = selected_ipatool()
     if binary is None:
         raise WorkflowError(str(IpatoolMissing()))
 
-    script = accounts.config_dir() / "sign-in.command"
-    command = " ".join(
-        [shlex.quote(str(binary)), "auth", "login", "-e", shlex.quote(email)]
-    )
+    script = accounts.config_dir() / filename
+    command = " ".join(shlex.quote(part) for part in [str(binary), *args])
+    preamble = f"echo {shlex.quote(intro)}\necho\n" if intro else ""
     script.write_text(
         "#!/bin/zsh\n"
         "script_path=$0\n"
         "rm -f -- \"$script_path\"\n"
+        f"{preamble}"
         f"{command}\n"
         "status=$?\n"
         "echo\n"
         "if [ $status -eq 0 ]; then\n"
-        "  echo 'Sign-in complete. You can return to appfit.'\n"
+        f"  echo {shlex.quote(success)}\n"
         "else\n"
-        "  echo 'Sign-in failed. Review the message above.'\n"
+        f"  echo {shlex.quote(failure)}\n"
         "fi\n"
         "read -k 1 '?Press any key to close this window.'\n"
         "exit $status\n"

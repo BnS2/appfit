@@ -10,8 +10,14 @@ from appfit import accounts, cache, workflows
 from appfit.apps import App
 from appfit.devices import Target
 from appfit.probe import BuildInfo
-from appfit.store import Account, BuildNotServed, WrongAccount
-from appfit.workflows import BuildWorkflow, WorkflowError, target_from_manual
+from appfit.store import Account, AuthCodeRequired, BuildNotServed, WrongAccount
+from appfit.workflows import (
+    BuildCandidate,
+    BuildWorkflow,
+    VerificationRequired,
+    WorkflowError,
+    target_from_manual,
+)
 
 
 APP = App(
@@ -316,3 +322,105 @@ def test_a_build_the_store_refuses_is_never_recommended():
 
     assert refused.runs_on("18.0") is False
     assert refused.fits(Target.from_ios("18.0", "ipad")) is False
+
+
+def test_claim_stops_at_the_first_verification_request(tmp_path):
+    """Each further store call after Apple asks for a code sends another prompt."""
+    client = FakeClient()
+    attempts = []
+
+    def demand_code(bundle_id):
+        attempts.append(bundle_id)
+        raise AuthCodeRequired()
+
+    client.purchase = demand_code
+    client.version_ids = lambda bundle_id: pytest.fail(
+        "must not keep calling the store after Apple asks for a code"
+    )
+
+    with pytest.raises(VerificationRequired) as failure:
+        BuildWorkflow(client, tmp_path / "ipa").resolve(
+            APP,
+            Target.from_ios("16.7.16", "ipad"),
+            "owner@example.com",
+            claim_licence=True,
+        )
+
+    assert failure.value.app == APP
+    assert failure.value.account == "owner@example.com"
+    assert failure.value.rejected is False
+    assert attempts == [APP.bundle_id]
+
+
+def test_download_does_not_claim_the_same_licence_twice(tmp_path):
+    client = FakeClient()
+    claims = []
+    original = client.purchase
+    client.purchase = lambda bundle_id: claims.append(bundle_id) or original(bundle_id)
+    workflow = BuildWorkflow(client, tmp_path / "ipa")
+    target = Target.from_ios("16.7.16", "ipad")
+    candidate = BuildCandidate(
+        history_index=1,
+        external_version_id="101",
+        display_version="2.0",
+        release_date="2021-01-01",
+        minimum_os="16.0",
+        device_families=(1, 2),
+        compatible=True,
+        source="metadata",
+    )
+
+    assert workflow.claim(APP, "owner@example.com") is True
+    workflow.prepare(APP, target, "owner@example.com", candidate)
+
+    assert claims == [APP.bundle_id]
+
+
+def test_claim_cache_is_scoped_to_the_apple_id(tmp_path):
+    client = FakeClient()
+    claims = []
+    client.require_account = lambda email: client.account
+    client.purchase = lambda bundle_id: claims.append(bundle_id) or True
+    workflow = BuildWorkflow(client, tmp_path / "ipa")
+
+    assert workflow.claim(APP, "first@example.com") is True
+    assert workflow.claim(APP, "second@example.com") is True
+
+    assert claims == [APP.bundle_id, APP.bundle_id]
+
+
+def test_verification_claim_forwards_the_code_and_resumes_as_licensed(tmp_path):
+    client = FakeClient()
+    supplied = []
+    client.purchase_with_auth_code = (
+        lambda bundle_id, code: supplied.append((bundle_id, code)) or True
+    )
+    client.purchase = lambda bundle_id: pytest.fail(
+        "verified licence must not be claimed a second time"
+    )
+    workflow = BuildWorkflow(client, tmp_path / "ipa")
+
+    assert workflow.verify_claim(APP, "owner@example.com", "123456") is True
+    # The restarted action reports the verified result once, then sees the licence as held.
+    assert workflow.claim(APP, "owner@example.com") is True
+    assert workflow.claim(APP, "owner@example.com") is False
+
+    assert supplied == [(APP.bundle_id, "123456")]
+
+
+def test_rejected_verification_code_requests_a_new_code(tmp_path):
+    client = FakeClient()
+
+    def reject(bundle_id, code):
+        raise AuthCodeRequired()
+
+    client.purchase_with_auth_code = reject
+    workflow = BuildWorkflow(client, tmp_path / "ipa")
+
+    with pytest.raises(VerificationRequired) as failure:
+        workflow.verify_claim(APP, "owner@example.com", "123456")
+
+    assert failure.value.app == APP
+    assert failure.value.account == "owner@example.com"
+    assert failure.value.rejected is True
+    assert "not accepted" in str(failure.value)

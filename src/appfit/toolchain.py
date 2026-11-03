@@ -28,6 +28,10 @@ IPATOOL_RELEASE = "v2.4.0"
 IPATOOL_REVISION = "abd86cb01a295be2be92d528bb56996861ab620c"
 IPATOOL_ENV = "APPFIT_IPATOOL"
 PATCH_NAME = "ipatool-compatibility-metadata.patch"
+# Bump whenever the patch changes, so a helper built from an older patch is
+# rebuilt by `appfit ipatool install` instead of trusted as current.
+# 3: GUI claims can supply the 2FA code over stdin; CLI claims still prompt.
+PATCH_REVISION = 3
 
 
 class ToolchainError(RuntimeError):
@@ -54,6 +58,13 @@ def managed_ipatool_path() -> Path:
 
 def _manifest_path() -> Path:
     return managed_ipatool_path().with_name("manifest.json")
+
+
+def _manifest_patch_revision() -> object:
+    try:
+        return json.loads(_manifest_path().read_text()).get("patch_revision")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
 
 
 def bundled_ipatool_path() -> Path:
@@ -172,7 +183,11 @@ def install_managed_ipatool(
     destination = managed_ipatool_path()
     if destination.is_file() and not force:
         current = status()
-        if current.path == destination and current.compatibility_metadata is True:
+        if (
+            current.path == destination
+            and current.compatibility_metadata is True
+            and _manifest_patch_revision() == PATCH_REVISION
+        ):
             return destination
 
     missing = [name for name in ("git", "go") if shutil.which(name) is None]
@@ -252,6 +267,7 @@ def install_managed_ipatool(
 
     manifest = {
         "compatibility_metadata": True,
+        "patch_revision": PATCH_REVISION,
         "release": IPATOOL_RELEASE,
         "repository": IPATOOL_REPOSITORY,
         "revision": IPATOOL_REVISION,
