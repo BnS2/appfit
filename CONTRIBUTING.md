@@ -78,15 +78,22 @@ Python 3.11 and 3.14, build a wheel, and run the GUI/widget suite offscreen on
 Python 3.12. CI must not use Apple credentials or a physical device.
 
 The manually triggered `macOS App` workflow builds unsigned test bundles for
-Apple silicon and Intel. Public GUI release artifacts must additionally be
-Developer ID signed, hardened-runtime enabled, notarized, and stapled; do not
-publish the unsigned test artifacts as a release.
+Apple silicon and Intel; do not publish its artifacts as a release.
 
 Tags matching `v*` start the release workflow. It verifies the tag against the
 package version and changelog, repeats the offline tests, builds wheel and source
-archives, builds signed/notarized Apple silicon and Intel disk images, and
-publishes them all to a GitHub Release only after verification passes. It does
-not publish to PyPI. The desktop jobs have no repository write permission.
+archives, builds Apple silicon and Intel disk images, and publishes them all to a
+GitHub Release only after verification passes. It does not publish to PyPI. The
+desktop jobs have no repository write permission.
+
+Signing follows the repository secrets listed under Releases. With all six, the
+disk images are Developer ID signed, hardened-runtime enabled, notarized, and
+stapled. With none, they are ad-hoc signed and not notarized, and the release
+notes open with how to start such an app (System Settings → Privacy & Security
+→ Open Anyway). A partial set fails the release. appfit currently releases
+unsigned: the project has no paid Apple Developer Program membership. Adding
+the six secrets switches signing on with no workflow change. Either way, the
+build and the frozen app must pass the runtime checks below.
 
 ## Releases
 
@@ -96,8 +103,8 @@ not publish to PyPI. The desktop jobs have no repository write permission.
 3. Push the release commit to `main` and wait for CI to pass.
 4. Create and push an annotated `v<version>` tag.
 
-Before step 4, the developer must approve the release and configure these
-repository secrets through GitHub's secret store: `MACOS_CERTIFICATE_P12`
+Before step 4, the developer must approve the release. To sign it, configure
+these repository secrets through GitHub's secret store: `MACOS_CERTIFICATE_P12`
 (base64 Developer ID Application certificate plus private key),
 `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGNING_IDENTITY` (certificate identity or
 fingerprint), `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_NOTARY_PASSWORD` (an
@@ -105,7 +112,7 @@ app-specific password). An Apple Development certificate is insufficient.
 The workflow imports the certificate into an ephemeral runner keychain and
 deletes it afterward. No signing/notary credentials are exposed to PR jobs.
 
-The workflow signs nested code through PyInstaller with hardened runtime,
+When signing, the workflow signs nested code through PyInstaller with hardened runtime,
 checks the expected Developer ID team and secure timestamp, and executes the
 frozen app's `--check-bundle-runtime <report.json>` before its GUI smoke test.
 It notarizes and staples the app, packages it, then signs, notarizes and staples
@@ -113,8 +120,11 @@ the disk image. Both Apple submissions must report `Accepted`; stapler,
 Gatekeeper and disk-image checks must pass. Per-architecture runtime/CA hashes
 and Apple acceptance reports are retained as workflow artifacts. These steps
 must be exercised with approved credentials before claiming release readiness;
-unit tests do not establish signing or notarization acceptance. Do not replace
-old public assets with an unsigned test candidate.
+unit tests do not establish signing or notarization acceptance. Without the
+secrets, the same build, runtime check, and GUI smoke test run on the ad-hoc
+signed app, and the disk image passes `hdiutil verify`. Do not replace old
+public assets with an unsigned test candidate built outside the release
+workflow.
 
 The release notes are composed by `scripts/release_notes.py`: the changelog
 entry for that version with its bullets unwrapped, closed by a `Full Changelog`

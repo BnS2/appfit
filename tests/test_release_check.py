@@ -89,3 +89,15 @@ def test_release_notes_refuse_a_version_the_changelog_does_not_describe(tmp_path
 
     with pytest.raises(SystemExit):
         release_notes.compose("v9.9.9", changelog)
+
+
+def test_unsigned_release_notes_explain_how_to_open_the_app(tmp_path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text("# Changelog\n\n## 1.0.0 - 2026-01-01\n\n- First.\n")
+
+    notes = release_notes.compose("v1.0.0", changelog, unsigned=True)
+
+    assert notes.startswith("> [!NOTE]\n> The Mac disk images are not signed")
+    assert "notarized" in notes and "Open Anyway" in notes
+    assert "- First." in notes
+    assert "Open Anyway" not in release_notes.compose("v1.0.0", changelog)

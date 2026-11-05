@@ -19,6 +19,8 @@ jobs:
       matrix:
         runner: [macos-15, macos-15-intel]
     runs-on: ${{ matrix.runner }}
+    outputs:
+      signed: ${{ steps.signing.outputs.signed }}
 
     steps:
       - uses: actions/checkout@v7
@@ -44,7 +46,10 @@ jobs:
         run: pytest -m "not network"
       - name: Verify release version before credential use
         run: python scripts/release_check.py "$GITHUB_REF_NAME"
-      - name: Import Developer ID certificate
+      # All six secrets: Developer ID signing and notarization. None: an unsigned
+      # release, labelled as such. A partial set stops here.
+      - name: Choose signing and import Developer ID certificate
+        id: signing
         env:
           CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -56,11 +61,13 @@ jobs:
           python - <<'PYTHON'
           import base64, os, secrets, subprocess
           from pathlib import Path
-          required = ("CERTIFICATE", "CERTIFICATE_PASSWORD", "SIGNING_IDENTITY",
-                      "APPLE_ID", "APPLE_TEAM_ID", "NOTARY_PASSWORD")
-          missing = [name for name in required if not os.environ[name]]
-          if missing:
-              raise SystemExit("Configure release secrets: " + ", ".join(missing))
+          from scripts.verify_macos_signature import signing_enabled
+          signed = signing_enabled(os.environ)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"signed={str(signed).lower()}\n")
+          if not signed:
+              print("::warning::No signing secrets: publishing ad-hoc-signed disk images without notarization")
+              raise SystemExit(0)
           temp = Path(os.environ["RUNNER_TEMP"])
           keychain = str(temp / "appfit-signing.keychain-db")
           certificate = temp / "appfit-signing.p12"
@@ -80,18 +87,30 @@ jobs:
           finally:
               certificate.unlink(missing_ok=True)
           PYTHON
-      - name: Build Developer ID application
+      - name: Build application
         env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
           SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-        run: python scripts/build_macos_app.py --skip-dmg --codesign-identity "$SIGNING_IDENTITY"
+        run: |
+          if [[ "$SIGNED" == true ]]; then
+            python scripts/build_macos_app.py --skip-dmg --codesign-identity "$SIGNING_IDENTITY"
+          else
+            python scripts/build_macos_app.py
+          fi
       - name: Verify and smoke-test bundle
         env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           QT_QPA_PLATFORM: offscreen
           XDG_CONFIG_HOME: ${{ runner.temp }}/appfit-smoke-config
         run: |
           APP_PATH="deployment/appfit-$(uname -m).app"
-          python scripts/verify_macos_signature.py "$APP_PATH" "$APPLE_TEAM_ID"
+          if [[ "$SIGNED" == true ]]; then
+            python scripts/verify_macos_signature.py "$APP_PATH" "$APPLE_TEAM_ID"
+          else
+            codesign --verify --deep --strict "$APP_PATH"
+            hdiutil verify deployment/appfit-*.dmg
+          fi
           mkdir -p deployment/reports
           "$APP_PATH/Contents/MacOS/appfit" --check-bundle-runtime \
             "$(pwd)/deployment/reports/runtime-$(uname -m).json"
@@ -103,6 +122,7 @@ jobs:
           kill "$APP_PID"
           wait "$APP_PID" || true
       - name: Notarize, staple, and package public disk image
+        if: steps.signing.outputs.signed == 'true'
         env:
           SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -185,9 +205,14 @@ jobs:
           name: appfit-${{ github.ref_name }}
           path: dist/*
       - name: Compose release notes
+        env:
+          SIGNED: ${{ needs.desktop.outputs.signed }}
         run: |
-          python scripts/release_notes.py "$GITHUB_REF_NAME" \
-            > "$RUNNER_TEMP/release-notes.md"
+          if [[ "$SIGNED" == true ]]; then
+            python scripts/release_notes.py "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+          else
+            python scripts/release_notes.py --unsigned "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+          fi
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

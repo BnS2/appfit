@@ -50,3 +50,18 @@ def test_apple_acceptance_report_passes(tmp_path):
     report = tmp_path / "notary.json"
     report.write_text('{"id": "example-submission", "status": "Accepted"}')
     module.validate_notarization(report)
+
+
+def test_all_release_secrets_select_signing():
+    assert module.signing_enabled({name: "x" for name in module.RELEASE_SECRETS})
+
+
+def test_no_release_secrets_select_an_unsigned_release():
+    assert not module.signing_enabled({name: "" for name in module.RELEASE_SECRETS})
+
+
+def test_partial_release_secrets_stop_the_release():
+    environ = {name: "x" for name in module.RELEASE_SECRETS}
+    environ["NOTARY_PASSWORD"] = ""
+    with pytest.raises(SystemExit, match="all release secrets or none; missing: NOTARY_PASSWORD"):
+        module.signing_enabled(environ)
