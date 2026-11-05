@@ -8,6 +8,10 @@ breaks read as ragged. A `Full Changelog` link closes it, matching the releases
 that came before.
 
     python scripts/release_notes.py v0.3.1
+    python scripts/release_notes.py --unsigned v0.3.2
+
+`--unsigned` opens the notes with how to start a Mac app that is not notarized,
+for releases built without the Developer ID signing secrets.
 """
 
 from __future__ import annotations
@@ -18,6 +22,13 @@ from pathlib import Path
 
 REPOSITORY = "https://github.com/BnS2/appfit"
 HEADING = re.compile(r"^## (\d+\.\d+\.\d+) - \d{4}-\d{2}-\d{2}$", flags=re.MULTILINE)
+UNSIGNED_NOTE = (
+    "> [!NOTE]\n"
+    "> The Mac disk images are not signed with a Developer ID or notarized by Apple, "
+    "so macOS blocks appfit the first time it opens. After that first attempt, open "
+    "**System Settings → Privacy & Security**, click **Open Anyway** next to the "
+    "appfit message, and confirm. macOS remembers the choice.\n\n"
+)
 
 
 def versions(text: str) -> list[str]:
@@ -62,11 +73,14 @@ def changelog_link(version: str, all_versions: list[str]) -> str:
     return f"**Full Changelog**: {REPOSITORY}/commits/{tag}"
 
 
-def compose(tag: str, changelog: Path = Path("CHANGELOG.md")) -> str:
+def compose(
+    tag: str, changelog: Path = Path("CHANGELOG.md"), *, unsigned: bool = False
+) -> str:
     version = tag[1:] if tag.startswith("v") else tag
     text = changelog.read_text()
     return (
-        unwrap(section(version, text))
+        (UNSIGNED_NOTE if unsigned else "")
+        + unwrap(section(version, text))
         + "\n\n"
         + changelog_link(version, versions(text))
         + "\n"
@@ -75,10 +89,12 @@ def compose(tag: str, changelog: Path = Path("CHANGELOG.md")) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    unsigned = args[:1] == ["--unsigned"]
+    args = args[1:] if unsigned else args
     if len(args) != 1:
-        print("usage: release_notes.py <tag>", file=sys.stderr)
+        print("usage: release_notes.py [--unsigned] <tag>", file=sys.stderr)
         return 2
-    print(compose(args[0]), end="")
+    print(compose(args[0], unsigned=unsigned), end="")
     return 0
 
 

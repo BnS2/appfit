@@ -5,10 +5,13 @@ All notable changes to appfit are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.3.2 - 2026-11-05
 
 ### Security
 
+- Mac builds require patched Python 3.12.16 or later in the 3.12 branch and
+  certifi 2026.10.19 or later, with the distrusted emSign ECC roots absent.
+  Both the build environment and the actual frozen runtime are checked.
 - Pillow is now required at 13.0.0 or later for the `device` and `gui` extras,
   which resolves the Pillow advisories tracked in BnS2/repo-safety#88. appfit
   now requires Python 3.11 or later; Python 3.10 is no longer supported.
@@ -29,18 +32,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - The bundled ipatool patch is now revision 3. `appfit ipatool install`
   rebuilds helpers built from the earlier patch.
-
-## 0.3.2 - 2026-10-30
-
-### Security
-
-- Mac builds require patched Python 3.12.16 or later in the 3.12 branch and
-  certifi 2026.10.19 or later, with the distrusted emSign ECC roots absent.
-  Both the build environment and the actual frozen runtime are checked.
-- Public Mac releases require timestamped Developer ID signing, hardened
-  runtime, Apple notarization, and stapled tickets for the app and disk image.
-  Missing signing credentials or a failed verification blocks publication.
-  The existing v0.3.1 disk images remain outdated until replaced.
+- The Mac disk images are ad-hoc signed and not notarized, because the
+  project has no paid Apple Developer Program membership. macOS blocks the
+  first launch; allow it under System Settings → Privacy & Security → Open
+  Anyway, as the release notes describe. The release workflow signs and
+  notarizes automatically once all six signing secrets are configured, and
+  stops on a partial set.
 
 ## 0.3.1 - 2026-09-04
 

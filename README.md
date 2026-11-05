@@ -23,17 +23,18 @@ suits scripting and repeated runs.
 
 ## Install the Mac app
 
-The existing **v0.3.1 disk images bundle outdated Python and CA certificates**.
-Use a patched Python environment with the terminal installation below until
-replacement signed and notarized disk images are published. Do not bypass
-Gatekeeper for the old disk images.
+The **v0.3.1 disk images bundle outdated Python and CA certificates**. Use
+0.3.2 or later.
 
 1. Download `appfit-<version>-arm64.dmg` (Apple silicon) or
    `appfit-<version>-x86_64.dmg` (Intel) from
    [GitHub Releases](https://github.com/BnS2/appfit/releases).
 2. Open the disk image and drag **appfit** to **Applications**.
-3. Use a release whose notes confirm signing and notarization. Future releases
-   verify these requirements before publishing the disk images.
+3. The Mac app is not yet signed with a Developer ID or notarized by Apple, so
+   macOS blocks it the first time it opens. After that first attempt, open
+   **System Settings → Privacy & Security**, click **Open Anyway** next to the
+   appfit message, and confirm. The release notes say when a release is
+   unsigned.
 
 That is the whole install. The App Store helper travels inside the app, so
 Python and Go are not required.

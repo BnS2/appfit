@@ -7,6 +7,22 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Mapping
+
+RELEASE_SECRETS = (
+    "CERTIFICATE", "CERTIFICATE_PASSWORD", "SIGNING_IDENTITY",
+    "APPLE_ID", "APPLE_TEAM_ID", "NOTARY_PASSWORD",
+)
+
+
+def signing_enabled(environ: Mapping[str, str]) -> bool:
+    """All six secrets sign and notarize; none publishes unsigned; a partial set stops."""
+    missing = [name for name in RELEASE_SECRETS if not environ.get(name)]
+    if len(missing) == len(RELEASE_SECRETS):
+        return False
+    if missing:
+        raise SystemExit("Configure all release secrets or none; missing: " + ", ".join(missing))
+    return True
 
 
 def validate_details(details: str, team: str) -> None:
